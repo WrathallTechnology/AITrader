@@ -274,6 +274,8 @@ class AITrader:
                 elapsed = (datetime.now() - loop_start).total_seconds()
                 sleep_time = max(0, 60 - elapsed)  # Run every minute
 
+                logger.info(f"Cycle complete in {elapsed:.1f}s. Sleeping {sleep_time:.1f}s...")
+
                 if self.running:
                     time.sleep(sleep_time)
 
@@ -306,7 +308,7 @@ class AITrader:
 
     def _run_crypto_cycle(self):
         """Run one cycle of crypto trading."""
-        logger.debug("Running crypto trading cycle...")
+        logger.info("Running crypto trading cycle...")
 
         for symbol in self.crypto_watchlist:
             try:
