@@ -155,6 +155,16 @@ class AITrader:
             min_confidence=0.55,
         )
 
+        # Load pre-trained ML model if it exists
+        from pathlib import Path
+        model_path = Path("models/price_predictor.pkl")
+        if model_path.exists():
+            try:
+                ml.load_model(model_path)
+                logger.info("Loaded pre-trained ML model")
+            except Exception as e:
+                logger.warning(f"Could not load ML model: {e}")
+
         # Create hybrid strategy that combines sub-strategies
         self.strategy = HybridStrategy(
             name="hybrid",
