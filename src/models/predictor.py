@@ -152,13 +152,17 @@ class PricePredictor:
         if len(X) == 0:
             raise ValueError("Insufficient data for prediction")
 
-        # Use most recent window
-        X_latest = X[-1:].reshape(1, -1)
+        # Use most recent window (keep 3D shape for normalization)
+        X_latest = X[-1:]  # Shape: (1, lookback, features)
 
-        # Normalize
-        X_norm = (X_latest - self._feature_mean.flatten()) / self._feature_std.flatten()
+        # Normalize using stored mean/std
+        X_norm, _, _ = DataProcessor.normalize_features(
+            X_latest,
+            mean=self._feature_mean,
+            std=self._feature_std
+        )
 
-        # Flatten
+        # Flatten for sklearn
         X_flat = X_norm.reshape(1, -1)
 
         # Predict
