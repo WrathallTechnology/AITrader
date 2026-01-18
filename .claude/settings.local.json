@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m examples.backtest_example:*)",
+      "Bash(python examples/backtest_example.py:*)",
+      "Bash(python:*)"
+    ]
+  }
+}
