@@ -42,16 +42,30 @@ def get_client():
 
 
 def get_account_info():
-    """Get account information."""
+    """Get account information - shows only effective trading capital."""
     client = get_client()
     account = client.get_account()
 
+    full_portfolio = float(account.portfolio_value)
+    initial_capital = config.trading.initial_capital or full_portfolio
+
+    # Calculate effective capital (initial + any P&L from bot's trades)
+    # For now, we track based on initial_capital setting
+    # In a real scenario, you'd track the bot's actual P&L separately
+    effective_capital = initial_capital
+
+    # Calculate what portion of cash is allocated to bot
+    cash_ratio = initial_capital / full_portfolio if full_portfolio > 0 else 1
+    effective_cash = float(account.cash) * cash_ratio
+    effective_buying_power = float(account.buying_power) * cash_ratio
+
     return {
-        "portfolio_value": float(account.portfolio_value),
-        "cash": float(account.cash),
-        "buying_power": float(account.buying_power),
-        "equity": float(account.equity),
-        "initial_capital": config.trading.initial_capital or float(account.portfolio_value),
+        "portfolio_value": effective_capital,  # Show only bot's capital
+        "cash": round(effective_cash, 2),
+        "buying_power": round(effective_buying_power, 2),
+        "equity": effective_capital,
+        "initial_capital": initial_capital,
+        "full_account_value": full_portfolio,  # Keep for reference
     }
 
 
@@ -186,17 +200,26 @@ def api_status():
         account = get_account_info()
         positions = get_positions()
 
-        # Calculate P&L
+        # Calculate P&L based on positions only (bot's actual trades)
         initial = account["initial_capital"]
-        current = account["portfolio_value"]
-        pnl = current - initial
-        pnl_pct = (pnl / initial) * 100 if initial > 0 else 0
+        positions_value = sum(p["market_value"] for p in positions)
+        positions_pnl = sum(p["unrealized_pl"] for p in positions)
+
+        # Effective value = initial capital + unrealized P&L from positions
+        effective_value = initial + positions_pnl
+        pnl_pct = (positions_pnl / initial) * 100 if initial > 0 else 0
 
         return jsonify({
             "status": "running",
-            "account": account,
+            "account": {
+                "portfolio_value": round(effective_value, 2),
+                "cash": round(initial - positions_value, 2),  # Cash = initial minus invested
+                "buying_power": round(initial - positions_value, 2),
+                "initial_capital": initial,
+                "positions_value": round(positions_value, 2),
+            },
             "pnl": {
-                "value": round(pnl, 2),
+                "value": round(positions_pnl, 2),
                 "percent": round(pnl_pct, 2),
             },
             "positions_count": len(positions),
