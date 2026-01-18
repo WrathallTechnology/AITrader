@@ -31,7 +31,7 @@ from config import config, AlpacaConfig
 from src.client import AlpacaClient
 from src.data.fetcher import DataFetcher
 from src.data.processor import DataProcessor
-from src.strategies import HybridStrategy, TechnicalStrategy, MLStrategy, SignalType
+from src.strategies import AdvancedHybridStrategy, TechnicalStrategy, MLStrategy, SignalType
 from src.risk import (
     PositionSizer,
     DrawdownProtection,
@@ -152,7 +152,7 @@ class AITrader:
             name="ml",
             weight=config.strategy.ml_weight,
             config=config.strategy,
-            min_confidence=0.55,
+            min_confidence=0.51,  # Lower threshold - act on weaker ML signals
         )
 
         # Load pre-trained ML model if it exists
@@ -166,11 +166,17 @@ class AITrader:
                 logger.warning(f"Could not load ML model: {e}")
 
         # Create hybrid strategy that combines sub-strategies
-        self.strategy = HybridStrategy(
+        # AGGRESSIVE SETTINGS - trades more frequently
+        self.strategy = AdvancedHybridStrategy(
             name="hybrid",
             strategies=[technical, ml],
-            min_confidence=0.5,
-            consensus_required=0.4,
+            min_confidence=0.25,  # Very low threshold - act on weak signals
+            consensus_required=0.0,  # No consensus needed - single strategy can trigger
+            use_adaptive_weights=False,  # Don't reduce weights based on performance
+            use_regime_detection=False,  # Don't avoid ranging markets
+            use_correlation_adjustment=False,  # Don't reduce correlated signals
+            use_time_filter=False,  # Trade any time (24/7 for crypto)
+            use_signal_scoring=True,  # Keep signal scoring
         )
 
     def _init_risk_components(self):
