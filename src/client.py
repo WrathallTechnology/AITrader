@@ -132,6 +132,11 @@ class AlpacaClient:
             time_in_force: 'day', 'gtc', 'ioc', 'fok'
         """
         order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
+
+        # Crypto only supports gtc or ioc, not day
+        if "/" in symbol:  # Crypto symbols have '/' (e.g., BTC/USD)
+            time_in_force = "gtc"
+
         tif = self._parse_time_in_force(time_in_force)
 
         request = MarketOrderRequest(
@@ -154,6 +159,11 @@ class AlpacaClient:
     ):
         """Submit a limit order."""
         order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
+
+        # Crypto only supports gtc or ioc, not day
+        if "/" in symbol:  # Crypto symbols have '/' (e.g., BTC/USD)
+            time_in_force = "gtc"
+
         tif = self._parse_time_in_force(time_in_force)
 
         request = LimitOrderRequest(
