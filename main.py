@@ -194,9 +194,11 @@ class AITrader:
         self.circuit_breaker: Optional[CircuitBreaker] = None
         self.position_sizer: Optional[PositionSizer] = None
 
+        # For crypto-only mode with small capital, use relaxed limits
+        # For mixed portfolios, you'd want stricter limits
         self.correlation_manager = PortfolioCorrelationManager(
-            max_sector_weight=0.30,
-            max_single_position=0.10,
+            max_sector_weight=1.0,  # Allow 100% crypto since we're crypto-only
+            max_single_position=0.50,  # Allow up to 50% in single position
         )
 
     def _init_execution_components(self):
@@ -247,10 +249,13 @@ class AITrader:
         # Initialize risk management with actual capital
         self.drawdown_protection = DrawdownProtection(initial_value=effective_capital)
         self.circuit_breaker = CircuitBreaker(self.drawdown_protection)
+        # Use larger position sizes for crypto with small capital
+        # Default is 2% which is only $20 on $1000 - too small for crypto
+        max_pos_pct = max(config.trading.default_position_size_pct, 0.25)  # At least 25%
         self.position_sizer = PositionSizer(
             circuit_breaker=self.circuit_breaker,
             base_risk_pct=config.trading.risk_per_trade,
-            max_position_pct=config.trading.default_position_size_pct,
+            max_position_pct=max_pos_pct,
         )
 
         while self.running:
@@ -440,9 +445,11 @@ class AITrader:
         }
         effective_capital = self.get_effective_capital()
 
+        # Use the same position size as the position sizer
+        proposed_pct = max(config.trading.default_position_size_pct, 0.25)
         can_add, violations = self.correlation_manager.can_add_position(
             symbol=symbol,
-            proposed_value=effective_capital * config.trading.default_position_size_pct,
+            proposed_value=effective_capital * proposed_pct,
             current_positions=current_positions,
         )
 
