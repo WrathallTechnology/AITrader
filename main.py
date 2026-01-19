@@ -47,6 +47,35 @@ from src.options import (
     OptionsScanner,
     create_risk_limits_conservative,
 )
+import json
+from pathlib import Path
+
+# Transaction log file
+TRANSACTIONS_FILE = Path("logs/transactions.json")
+
+
+def load_transactions() -> list:
+    """Load transaction history from file."""
+    if TRANSACTIONS_FILE.exists():
+        try:
+            with open(TRANSACTIONS_FILE, "r") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            return []
+    return []
+
+
+def save_transaction(transaction: dict):
+    """Save a transaction to the log file."""
+    transactions = load_transactions()
+    transactions.append(transaction)
+    # Keep only last 500 transactions
+    transactions = transactions[-500:]
+
+    TRANSACTIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(TRANSACTIONS_FILE, "w") as f:
+        json.dump(transactions, f, indent=2, default=str)
+
 
 # Setup logging
 def setup_logging():
@@ -246,6 +275,12 @@ class AITrader:
         effective_capital = self.get_effective_capital()
         logger.info(f"Effective Trading Capital: ${effective_capital:,.2f}")
 
+        # SAFETY: If initial_capital is set, always use it as the cap
+        # This prevents trading with full account even if get_effective_capital has issues
+        if config.trading.initial_capital is not None:
+            effective_capital = min(effective_capital, config.trading.initial_capital * 1.5)  # Allow 50% profit growth
+            logger.info(f"Using capped effective capital: ${effective_capital:,.2f} (initial: ${config.trading.initial_capital:,.2f})")
+
         # Initialize risk management with actual capital
         self.drawdown_protection = DrawdownProtection(initial_value=effective_capital)
         self.circuit_breaker = CircuitBreaker(self.drawdown_protection)
@@ -409,8 +444,13 @@ class AITrader:
             logger.info(f"Trade blocked by risk limits: {symbol}")
             return
 
-        # Calculate position size
-        effective_capital = self.get_effective_capital()
+        # Calculate position size using INITIAL capital, not current account value
+        # This prevents position size from growing as positions are added
+        if config.trading.initial_capital is not None:
+            effective_capital = config.trading.initial_capital
+        else:
+            effective_capital = self.get_effective_capital()
+
         current_price = float(df["close"].iloc[-1])
 
         shares = self.position_sizer.calculate_position_size(
@@ -475,9 +515,25 @@ class AITrader:
         return True
 
     def _execute_trade(self, symbol: str, signal, shares: float, price: float):
-        """Execute a trade."""
+        """Execute a trade and log the transaction."""
         try:
+            order = None
+            trade_value = shares * price
+
             if signal.signal_type == SignalType.BUY:
+                # CHECK IF WE ALREADY HAVE A POSITION - prevents duplicate buys
+                existing_position = self.client.get_position(symbol)
+                if existing_position:
+                    logger.debug(f"Already have position in {symbol} ({float(existing_position.qty):.4f} shares), skipping buy")
+                    return
+
+                # Also check for pending orders to avoid duplicate orders
+                open_orders = self.client.get_orders(status="open")
+                pending_for_symbol = [o for o in open_orders if o.symbol == symbol.replace("/", "")]
+                if pending_for_symbol:
+                    logger.debug(f"Already have pending order(s) for {symbol}, skipping buy")
+                    return
+
                 order = self.client.submit_limit_order(
                     symbol=symbol,
                     qty=shares,
@@ -487,21 +543,69 @@ class AITrader:
                 )
                 logger.info(f"BUY order submitted: {order.id if order else 'FAILED'}")
 
+                # Log the transaction
+                save_transaction({
+                    "timestamp": datetime.now().isoformat(),
+                    "symbol": symbol,
+                    "action": "BUY",
+                    "quantity": shares,
+                    "price": price,
+                    "value": round(trade_value, 2),
+                    "confidence": round(signal.confidence * 100, 1),
+                    "reason": signal.reason,
+                    "order_id": str(order.id) if order else None,
+                    "status": "submitted",
+                })
+
             elif signal.signal_type == SignalType.SELL:
                 # Check if we have a position to sell
                 position = self.client.get_position(symbol)
                 if position:
+                    sell_qty = abs(float(position.qty))
+                    sell_value = sell_qty * price
+                    entry_price = float(position.avg_entry_price)
+                    pnl = (price - entry_price) * sell_qty
+                    pnl_pct = ((price / entry_price) - 1) * 100
+
                     order = self.client.submit_limit_order(
                         symbol=symbol,
-                        qty=abs(float(position.qty)),
+                        qty=sell_qty,
                         side="sell",
                         limit_price=price,
                         time_in_force="day",
                     )
                     logger.info(f"SELL order submitted: {order.id if order else 'FAILED'}")
 
+                    # Log the transaction
+                    save_transaction({
+                        "timestamp": datetime.now().isoformat(),
+                        "symbol": symbol,
+                        "action": "SELL",
+                        "quantity": sell_qty,
+                        "price": price,
+                        "value": round(sell_value, 2),
+                        "entry_price": entry_price,
+                        "pnl": round(pnl, 2),
+                        "pnl_pct": round(pnl_pct, 2),
+                        "confidence": round(signal.confidence * 100, 1),
+                        "reason": signal.reason,
+                        "order_id": str(order.id) if order else None,
+                        "status": "submitted",
+                    })
+
         except Exception as e:
             logger.error(f"Error executing trade for {symbol}: {e}")
+            # Log failed transaction
+            save_transaction({
+                "timestamp": datetime.now().isoformat(),
+                "symbol": symbol,
+                "action": signal.signal_type.value.upper(),
+                "quantity": shares,
+                "price": price,
+                "reason": signal.reason,
+                "status": "failed",
+                "error": str(e),
+            })
 
     def _evaluate_options_trade(self, opportunity):
         """Evaluate and potentially execute an options trade."""

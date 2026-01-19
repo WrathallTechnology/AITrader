@@ -326,6 +326,22 @@ def api_scanner():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/transactions")
+def api_transactions():
+    """Get transaction history with reasoning."""
+    try:
+        transactions_file = Path("logs/transactions.json")
+        if transactions_file.exists():
+            with open(transactions_file, "r") as f:
+                transactions = json.load(f)
+            # Return last 100 transactions, most recent first
+            transactions = list(reversed(transactions[-100:]))
+            return jsonify({"transactions": transactions})
+        return jsonify({"transactions": []})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == "__main__":
     # Run on all interfaces so it's accessible externally
     app.run(host="0.0.0.0", port=5000, debug=False)
