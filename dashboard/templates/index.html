@@ -322,6 +322,31 @@
             </div>
         </div>
 
+        <!-- Scanner Section -->
+        <h2 class="section-title" style="margin-top: 30px;">Crypto Scanner</h2>
+        <div class="card">
+            <p style="color: #888; font-size: 12px; margin-bottom: 15px;">Auto-discovers top trading opportunities across 28+ crypto pairs</p>
+            <table class="positions-table" id="scanner-table">
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Price</th>
+                        <th>24h Change</th>
+                        <th>RSI</th>
+                        <th>Volatility</th>
+                        <th>Volume 24h</th>
+                        <th>Score</th>
+                        <th>Reason</th>
+                    </tr>
+                </thead>
+                <tbody id="scanner-table-body">
+                    <tr>
+                        <td colspan="8" style="text-align: center; color: #666;">Loading scanner data...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
         <!-- Positions Section -->
         <h2 class="section-title" style="margin-top: 30px;">Positions</h2>
         <div class="card">
@@ -564,11 +589,62 @@
             }
         }
 
+        // Update scanner
+        async function updateScanner() {
+            try {
+                const response = await fetch('/api/scanner');
+                const data = await response.json();
+
+                const tbody = document.getElementById('scanner-table-body');
+
+                if (data.error) {
+                    tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: #ff5252;">Error: ${data.error}</td></tr>`;
+                    return;
+                }
+
+                if (!data.opportunities || data.opportunities.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: #666;">No opportunities found</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = data.opportunities.map(o => {
+                    const scoreColor = o.score >= 70 ? '#00c853' : o.score >= 50 ? '#ffc107' : '#888';
+                    const rsiClass = o.rsi < 30 ? 'positive' : o.rsi > 70 ? 'negative' : '';
+                    const changeClass = o.change_24h >= 0 ? 'positive' : 'negative';
+
+                    return `
+                        <tr>
+                            <td><strong>${o.symbol}</strong></td>
+                            <td>${formatCurrency(o.price)}</td>
+                            <td class="${changeClass}">${formatPercent(o.change_24h)}</td>
+                            <td class="${rsiClass}">${o.rsi.toFixed(1)}</td>
+                            <td>${o.volatility.toFixed(1)}%</td>
+                            <td>${formatVolume(o.volume_24h)}</td>
+                            <td style="color: ${scoreColor}; font-weight: 600;">${o.score.toFixed(0)}</td>
+                            <td style="font-size: 11px; color: #888; max-width: 200px;">${o.reason}</td>
+                        </tr>
+                    `;
+                }).join('');
+            } catch (error) {
+                console.error('Error fetching scanner:', error);
+                document.getElementById('scanner-table-body').innerHTML =
+                    '<tr><td colspan="8" style="text-align: center; color: #ff5252;">Failed to load scanner data</td></tr>';
+            }
+        }
+
+        // Format volume
+        function formatVolume(value) {
+            if (value >= 1000000) return '$' + (value / 1000000).toFixed(1) + 'M';
+            if (value >= 1000) return '$' + (value / 1000).toFixed(0) + 'K';
+            return '$' + value.toFixed(0);
+        }
+
         // Update all
         async function updateAll() {
             await Promise.all([
                 updateStatus(),
                 updateSignals(),
+                updateScanner(),
                 updatePositions(),
                 updateLogs(),
             ]);

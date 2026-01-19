@@ -293,6 +293,39 @@ def api_analysis(symbol: str):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/scanner")
+def api_scanner():
+    """Get crypto scanner opportunities."""
+    try:
+        client = get_client()
+        scanner = CryptoScanner(
+            client=client,
+            min_volume_usd=50_000,
+            max_pairs=15,
+        )
+        opportunities = scanner.get_top_opportunities(count=15, min_score=30)
+
+        return jsonify({
+            "opportunities": [
+                {
+                    "symbol": o.symbol,
+                    "price": round(o.price, 2) if o.price > 1 else round(o.price, 6),
+                    "change_24h": round(o.change_24h, 2),
+                    "volume_24h": round(o.volume_24h, 0),
+                    "volatility": round(o.volatility, 1),
+                    "rsi": round(o.rsi, 1),
+                    "trend_strength": round(o.trend_strength, 2),
+                    "score": round(o.score, 0),
+                    "reason": o.reason,
+                }
+                for o in opportunities
+            ],
+            "timestamp": datetime.now().isoformat(),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == "__main__":
     # Run on all interfaces so it's accessible externally
     app.run(host="0.0.0.0", port=5000, debug=False)
