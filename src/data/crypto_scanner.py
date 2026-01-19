@@ -90,11 +90,30 @@ class CryptoScanner:
                 end=datetime.now(),
             )
 
-            if not bars or symbol not in bars:
-                logger.debug(f"{symbol}: No data returned")
+            # Convert Alpaca response to DataFrame
+            try:
+                df = bars.df
+                if df.empty:
+                    logger.debug(f"{symbol}: No data returned")
+                    return None
+
+                # Handle multi-index if present
+                if isinstance(df.index, pd.MultiIndex):
+                    df = df.xs(symbol, level="symbol")
+
+                # Reset and rename for consistency
+                df = df.reset_index()
+                if "timestamp" in df.columns:
+                    df = df.rename(columns={"timestamp": "datetime"})
+                    df = df.set_index("datetime")
+
+                df = df[["open", "high", "low", "close", "volume"]]
+                df = df.sort_index()
+
+            except Exception as e:
+                logger.debug(f"{symbol}: Error processing data: {e}")
                 return None
 
-            df = bars[symbol]
             if len(df) < 24:  # Need at least 24 hours of data
                 logger.debug(f"{symbol}: Only {len(df)} bars (need 24)")
                 return None
