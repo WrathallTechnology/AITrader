@@ -139,7 +139,7 @@ class AITrader:
         self.data_processor = DataProcessor()
         self.crypto_scanner = CryptoScanner(
             client=self.client,
-            min_volume_usd=50_000,  # Lower threshold for more pairs
+            min_volume_usd=1_000,  # Very low - small account doesn't need high liquidity
             max_pairs=10,
         )
 

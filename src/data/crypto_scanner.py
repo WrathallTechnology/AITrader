@@ -91,10 +91,12 @@ class CryptoScanner:
             )
 
             if not bars or symbol not in bars:
+                logger.debug(f"{symbol}: No data returned")
                 return None
 
             df = bars[symbol]
             if len(df) < 24:  # Need at least 24 hours of data
+                logger.debug(f"{symbol}: Only {len(df)} bars (need 24)")
                 return None
 
             # Add indicators
@@ -106,6 +108,7 @@ class CryptoScanner:
 
             # Filter by minimum price
             if price < self.min_price:
+                logger.debug(f"{symbol}: Price ${price} below min ${self.min_price}")
                 return None
 
             # Calculate 24h metrics
@@ -115,7 +118,10 @@ class CryptoScanner:
 
             # Filter by minimum volume
             if volume_24h < self.min_volume_usd:
+                logger.debug(f"{symbol}: Volume ${volume_24h:,.0f} below min ${self.min_volume_usd:,.0f}")
                 return None
+
+            logger.debug(f"{symbol}: PASSED filters - price=${price:.2f}, vol=${volume_24h:,.0f}")
 
             # Get indicators
             rsi = float(latest["rsi"]) if "rsi" in df.columns else 50

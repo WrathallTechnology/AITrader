@@ -300,7 +300,7 @@ def api_scanner():
         client = get_client()
         scanner = CryptoScanner(
             client=client,
-            min_volume_usd=50_000,
+            min_volume_usd=1_000,  # Very low - small account doesn't need high liquidity
             max_pairs=15,
         )
         opportunities = scanner.get_top_opportunities(count=15, min_score=30)
