@@ -198,7 +198,7 @@ class AITrader:
         # For mixed portfolios, you'd want stricter limits
         self.correlation_manager = PortfolioCorrelationManager(
             max_sector_weight=1.0,  # Allow 100% crypto since we're crypto-only
-            max_single_position=0.50,  # Allow up to 50% in single position
+            max_single_position=1.0,  # Allow 100% in single position for small accounts
         )
 
     def _init_execution_components(self):
@@ -249,9 +249,18 @@ class AITrader:
         # Initialize risk management with actual capital
         self.drawdown_protection = DrawdownProtection(initial_value=effective_capital)
         self.circuit_breaker = CircuitBreaker(self.drawdown_protection)
-        # Use larger position sizes for crypto with small capital
-        # Default is 2% which is only $20 on $1000 - too small for crypto
-        max_pos_pct = max(config.trading.default_position_size_pct, 0.25)  # At least 25%
+        # Position sizing for small accounts:
+        # - Use 20-30% per position to allow 3-4 positions
+        # - For crypto with small capital, meaningful trades require larger %
+        if effective_capital < 5_000:
+            max_pos_pct = 0.30  # 30% max per position for small accounts
+        elif effective_capital < 10_000:
+            max_pos_pct = 0.20  # 20% for medium accounts
+        else:
+            max_pos_pct = config.trading.default_position_size_pct  # Use config for large accounts
+
+        logger.info(f"Position sizing: {max_pos_pct:.0%} max per trade (${effective_capital * max_pos_pct:,.0f})")
+
         self.position_sizer = PositionSizer(
             circuit_breaker=self.circuit_breaker,
             base_risk_pct=config.trading.risk_per_trade,
@@ -321,20 +330,24 @@ class AITrader:
         """Run one cycle of crypto trading."""
         logger.info("Running crypto trading cycle...")
 
-        # Every 10 minutes, rescan for best opportunities
-        # Otherwise use cached watchlist
-        if not hasattr(self, "_last_crypto_scan") or \
-           (datetime.now() - self._last_crypto_scan).seconds > 600:
+        # Run scanner on first cycle (no _last_crypto_scan) or every 10 minutes
+        should_scan = not hasattr(self, "_last_crypto_scan") or \
+                      (datetime.now() - self._last_crypto_scan).total_seconds() > 600
+
+        if should_scan:
+            logger.info("Running crypto scanner to find opportunities...")
             try:
                 opportunities = self.crypto_scanner.get_top_opportunities(
                     count=8,
-                    min_score=40,
+                    min_score=30,  # Lower threshold to find more pairs
                 )
                 if opportunities:
                     self.crypto_watchlist = [o.symbol for o in opportunities]
-                    logger.info(f"Updated crypto watchlist: {self.crypto_watchlist}")
+                    logger.info(f"Scanner found {len(opportunities)} opportunities:")
                     for opp in opportunities[:5]:
-                        logger.info(f"  {opp.symbol}: score={opp.score:.0f}, {opp.reason}")
+                        logger.info(f"  {opp.symbol}: score={opp.score:.0f}, RSI={opp.rsi:.0f}, {opp.reason}")
+                else:
+                    logger.warning("Scanner found no opportunities, using default watchlist")
                 self._last_crypto_scan = datetime.now()
             except Exception as e:
                 logger.warning(f"Crypto scan failed, using default watchlist: {e}")
@@ -439,24 +452,25 @@ class AITrader:
                 logger.info("Max positions reached")
                 return False
 
-        # Check correlation/sector limits
-        current_positions = {
-            p.symbol: float(p.market_value) for p in positions
-        }
+        # For small accounts (<$10k), skip complex correlation/sector checks
+        # These are designed for larger diversified portfolios
         effective_capital = self.get_effective_capital()
+        if effective_capital >= 10_000:
+            # Check correlation/sector limits for larger accounts
+            current_positions = {
+                p.symbol: float(p.market_value) for p in positions
+            }
+            proposed_pct = max(config.trading.default_position_size_pct, 0.50)
+            can_add, violations = self.correlation_manager.can_add_position(
+                symbol=symbol,
+                proposed_value=effective_capital * proposed_pct,
+                current_positions=current_positions,
+            )
 
-        # Use the same position size as the position sizer
-        proposed_pct = max(config.trading.default_position_size_pct, 0.25)
-        can_add, violations = self.correlation_manager.can_add_position(
-            symbol=symbol,
-            proposed_value=effective_capital * proposed_pct,
-            current_positions=current_positions,
-        )
-
-        if not can_add:
-            for v in violations:
-                logger.info(f"Risk violation: {v}")
-            return False
+            if not can_add:
+                for v in violations:
+                    logger.info(f"Risk violation: {v}")
+                return False
 
         return True
 
