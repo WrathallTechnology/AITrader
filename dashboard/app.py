@@ -21,6 +21,7 @@ from config import config
 from src.client import AlpacaClient
 from src.data.fetcher import DataFetcher
 from src.data.processor import DataProcessor
+from src.data.crypto_scanner import CryptoScanner
 from src.strategies import TechnicalStrategy, MLStrategy, HybridStrategy
 from src.risk import DrawdownProtection, CircuitBreaker
 

@@ -31,6 +31,7 @@ from config import config, AlpacaConfig
 from src.client import AlpacaClient
 from src.data.fetcher import DataFetcher
 from src.data.processor import DataProcessor
+from src.data.crypto_scanner import CryptoScanner
 from src.strategies import AdvancedHybridStrategy, TechnicalStrategy, MLStrategy, SignalType
 from src.risk import (
     PositionSizer,
@@ -136,6 +137,11 @@ class AITrader:
         self.client = AlpacaClient(config.alpaca)
         self.data_fetcher = DataFetcher(self.client)
         self.data_processor = DataProcessor()
+        self.crypto_scanner = CryptoScanner(
+            client=self.client,
+            min_volume_usd=50_000,  # Lower threshold for more pairs
+            max_pairs=10,
+        )
 
     def _init_strategy_components(self):
         """Initialize strategy components."""
@@ -176,7 +182,7 @@ class AITrader:
             use_regime_detection=False,  # Don't avoid ranging markets
             use_correlation_adjustment=False,  # Don't reduce correlated signals
             use_time_filter=False,  # Trade any time (24/7 for crypto)
-            use_signal_scoring=True,  # Keep signal scoring
+            use_signal_scoring=False,  # Disable - use simple weighted voting instead
         )
 
     def _init_risk_components(self):
@@ -310,6 +316,24 @@ class AITrader:
         """Run one cycle of crypto trading."""
         logger.info("Running crypto trading cycle...")
 
+        # Every 10 minutes, rescan for best opportunities
+        # Otherwise use cached watchlist
+        if not hasattr(self, "_last_crypto_scan") or \
+           (datetime.now() - self._last_crypto_scan).seconds > 600:
+            try:
+                opportunities = self.crypto_scanner.get_top_opportunities(
+                    count=8,
+                    min_score=40,
+                )
+                if opportunities:
+                    self.crypto_watchlist = [o.symbol for o in opportunities]
+                    logger.info(f"Updated crypto watchlist: {self.crypto_watchlist}")
+                    for opp in opportunities[:5]:
+                        logger.info(f"  {opp.symbol}: score={opp.score:.0f}, {opp.reason}")
+                self._last_crypto_scan = datetime.now()
+            except Exception as e:
+                logger.warning(f"Crypto scan failed, using default watchlist: {e}")
+
         for symbol in self.crypto_watchlist:
             try:
                 self._analyze_and_trade(symbol, "crypto")
@@ -336,12 +360,13 @@ class AITrader:
 
     def _analyze_and_trade(self, symbol: str, asset_type: str):
         """Analyze a symbol and execute trade if signal generated."""
-        # Fetch data
+        # Fetch data - disable cache to get fresh data each cycle
         try:
             df = self.data_fetcher.get_historical_bars(
                 symbol=symbol,
                 timeframe="1Hour",
                 days=30,
+                use_cache=False,  # Always fetch fresh data
             )
         except Exception as e:
             logger.debug(f"Failed to fetch data for {symbol}: {e}")
@@ -356,10 +381,10 @@ class AITrader:
         # Generate signal
         signal = self.strategy.generate_signal(symbol, df)
 
+        logger.info(f"{symbol}: {signal.signal_type.value.upper()} (conf={signal.confidence:.1%}) - {signal.reason}")
+
         if signal.signal_type == SignalType.HOLD:
             return
-
-        logger.info(f"Signal generated: {signal}")
 
         # Check risk limits
         if not self._check_risk_limits(symbol, signal):
