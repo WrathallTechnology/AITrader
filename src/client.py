@@ -16,7 +16,7 @@ from alpaca.trading.requests import (
     TakeProfitRequest,
     GetOrdersRequest,
 )
-from alpaca.trading.enums import OrderSide, TimeInForce, OrderStatus, AssetClass
+from alpaca.trading.enums import OrderSide, TimeInForce, OrderStatus, AssetClass, QueryOrderStatus
 from alpaca.data.historical import StockHistoricalDataClient, CryptoHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest, CryptoBarsRequest
 from alpaca.data.timeframe import TimeFrame
@@ -215,10 +215,12 @@ class AlpacaClient:
         symbols: Optional[list[str]] = None,
     ):
         """Get orders with optional filtering."""
-        order_status = OrderStatus(status) if status != "all" else None
+        # Use QueryOrderStatus for filtering (open, closed, all)
+        # This is different from OrderStatus which is for order state
+        query_status = QueryOrderStatus(status) if status != "all" else None
 
         request = GetOrdersRequest(
-            status=order_status,
+            status=query_status,
             limit=limit,
             symbols=symbols,
         )
