@@ -148,15 +148,15 @@ class AITrader:
         self._init_risk_components()
         self._init_execution_components()
 
-        if mode in ("options", "all"):
-            self._init_options_components()
-
-        # Watchlist
+        # Watchlist - must be defined before _init_options_components
         self.stock_watchlist = [
             "AAPL", "MSFT", "GOOGL", "AMZN", "META",
             "NVDA", "TSLA", "AMD", "SPY", "QQQ",
         ]
         self.crypto_watchlist = ["BTC/USD", "ETH/USD"]
+
+        if mode in ("options", "all"):
+            self._init_options_components()
 
         logger.info("Initialization complete")
 
