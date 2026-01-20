@@ -372,10 +372,25 @@ def api_options_scanner():
         # Get market trend from request args or default to neutral
         market_trend = "neutral"
 
+        # Check if market is open
+        client = get_client()
+        market_open = client.is_market_open()
+
         opportunities = scanner.get_top_opportunities(
             count=10,
             market_trend=market_trend,
         )
+
+        # If no opportunities, return helpful message
+        if not opportunities:
+            return jsonify({
+                "opportunities": [],
+                "watchlist": OPTIONS_WATCHLIST,
+                "market_trend": market_trend,
+                "market_open": market_open,
+                "message": "No options opportunities found" + (" (market closed)" if not market_open else ""),
+                "timestamp": datetime.now().isoformat(),
+            })
 
         return jsonify({
             "opportunities": [
@@ -411,12 +426,13 @@ def api_options_scanner():
             ],
             "watchlist": OPTIONS_WATCHLIST,
             "market_trend": market_trend,
+            "market_open": market_open,
             "timestamp": datetime.now().isoformat(),
         })
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": str(e), "opportunities": []}), 500
 
 
 @app.route("/api/options-positions")

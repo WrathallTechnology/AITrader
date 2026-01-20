@@ -306,12 +306,15 @@ class AITrader:
             try:
                 loop_start = datetime.now()
 
+                # Check market status once per cycle
+                market_open = self._is_market_open()
+
                 # Check market hours for stocks
                 if self.mode in ("stocks", "all"):
-                    if self._is_market_open():
+                    if market_open:
                         self._run_stock_cycle()
                     else:
-                        logger.debug("Stock market closed")
+                        logger.info("Stock market closed - skipping stock cycle")
 
                 # Crypto trades 24/7
                 if self.mode in ("crypto", "all"):
@@ -319,8 +322,10 @@ class AITrader:
 
                 # Options during market hours
                 if self.mode in ("options", "all"):
-                    if self._is_market_open():
+                    if market_open:
                         self._run_options_cycle()
+                    else:
+                        logger.info("Stock market closed - skipping options cycle")
 
                 # Check drawdown protection
                 self._check_risk_state()
@@ -346,14 +351,19 @@ class AITrader:
     def _is_market_open(self) -> bool:
         """Check if stock market is open."""
         try:
-            return self.client.is_market_open()
+            is_open = self.client.is_market_open()
+            if not is_open:
+                # Log when market will open
+                clock = self.client.get_clock()
+                logger.debug(f"Market closed. Next open: {clock.next_open}")
+            return is_open
         except Exception as e:
             logger.error(f"Error checking market hours: {e}")
             return False
 
     def _run_stock_cycle(self):
         """Run one cycle of stock trading."""
-        logger.debug("Running stock trading cycle...")
+        logger.info("Running stock trading cycle...")
 
         for symbol in self.stock_watchlist:
             try:
@@ -514,6 +524,22 @@ class AITrader:
             logger.debug(f"Position size too small for {symbol}")
             return
 
+        # CAP trade value to remaining capital if initial_capital is set
+        if config.trading.initial_capital is not None and signal.signal_type == SignalType.BUY:
+            positions = self.client.get_all_positions()
+            total_position_value = sum(float(p.market_value) for p in positions)
+            remaining_capital = config.trading.initial_capital - total_position_value
+
+            proposed_value = shares * current_price
+            if proposed_value > remaining_capital:
+                # Cap to remaining capital (with small buffer for fees)
+                max_shares = (remaining_capital * 0.98) / current_price
+                if max_shares < 0.0001:  # Too small to trade
+                    logger.info(f"Remaining capital ${remaining_capital:.2f} too small for {symbol}")
+                    return
+                logger.info(f"Capping {symbol} trade from {shares:.4f} to {max_shares:.4f} shares (remaining capital: ${remaining_capital:.2f})")
+                shares = max_shares
+
         # Execute trade
         if not self.dry_run:
             self._execute_trade(symbol, signal, shares, current_price, asset_type)
@@ -543,12 +569,23 @@ class AITrader:
                 return False
 
         # CHECK TOTAL EXPOSURE - Don't exceed initial_capital limit
+        # This check happens BEFORE position sizing, so we estimate max potential trade
         if signal.signal_type == SignalType.BUY and config.trading.initial_capital is not None:
             total_position_value = sum(float(p.market_value) for p in positions)
-            max_exposure = config.trading.initial_capital * 0.95  # Leave 5% buffer
-            if total_position_value >= max_exposure:
-                logger.info(f"Capital limit reached: ${total_position_value:,.2f} / ${config.trading.initial_capital:,.2f}")
+            # Estimate this trade could use up to max_position_pct of capital
+            max_single_trade = config.trading.initial_capital * config.trading.default_position_size_pct
+            projected_total = total_position_value + max_single_trade
+
+            if total_position_value >= config.trading.initial_capital:
+                logger.info(f"Capital limit EXCEEDED: ${total_position_value:,.2f} / ${config.trading.initial_capital:,.2f} - blocking all new buys")
                 return False
+            elif projected_total > config.trading.initial_capital:
+                # Allow smaller trades but log warning
+                remaining = config.trading.initial_capital - total_position_value
+                logger.info(f"Capital usage: ${total_position_value:,.2f} / ${config.trading.initial_capital:,.2f} (${remaining:,.2f} remaining)")
+                if remaining < 100:  # Less than $100 remaining
+                    logger.info("Insufficient remaining capital for meaningful trade")
+                    return False
 
         # For small accounts (<$10k), skip complex correlation/sector checks
         # These are designed for larger diversified portfolios
@@ -727,6 +764,7 @@ class AITrader:
                     save_transaction({
                         "timestamp": datetime.now().isoformat(),
                         "symbol": order.contract.symbol,
+                        "asset_type": "options",
                         "underlying": order.contract.underlying,
                         "action": f"OPTIONS_{order.action.value}",
                         "option_type": order.contract.option_type.value if hasattr(order.contract.option_type, 'value') else str(order.contract.option_type),
@@ -748,6 +786,7 @@ class AITrader:
                     save_transaction({
                         "timestamp": datetime.now().isoformat(),
                         "symbol": order.contract.symbol,
+                        "asset_type": "options",
                         "underlying": order.contract.underlying,
                         "action": f"OPTIONS_{order.action.value}",
                         "reason": signal.rationale,
@@ -760,6 +799,7 @@ class AITrader:
             save_transaction({
                 "timestamp": datetime.now().isoformat(),
                 "symbol": opportunity.symbol,
+                "asset_type": "options",
                 "action": "OPTIONS_TRADE",
                 "reason": signal.rationale,
                 "status": "failed",
