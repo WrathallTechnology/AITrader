@@ -424,11 +424,25 @@
         <!-- Transactions Section -->
         <h2 class="section-title" style="margin-top: 30px;">Transaction History</h2>
         <div class="card">
-            <p style="color: #888; font-size: 12px; margin-bottom: 15px;">Recent buy/sell transactions with reasoning</p>
+            <div style="display: flex; gap: 10px; margin-bottom: 15px; align-items: center;">
+                <p style="color: #888; font-size: 12px; margin: 0;">Recent buy/sell transactions with reasoning</p>
+                <select id="tx-filter" onchange="updateTransactions()" style="background: #2a2a2a; color: #fff; border: 1px solid #444; padding: 4px 8px; border-radius: 4px; font-size: 12px;">
+                    <option value="all">All Types</option>
+                    <option value="crypto">Crypto Only</option>
+                    <option value="stock">Stocks Only</option>
+                    <option value="options">Options Only</option>
+                </select>
+                <select id="tx-limit" onchange="updateTransactions()" style="background: #2a2a2a; color: #fff; border: 1px solid #444; padding: 4px 8px; border-radius: 4px; font-size: 12px;">
+                    <option value="20">Last 20</option>
+                    <option value="50">Last 50</option>
+                    <option value="100">Last 100</option>
+                </select>
+            </div>
             <table class="positions-table" id="transactions-table">
                 <thead>
                     <tr>
                         <th>Time</th>
+                        <th>Type</th>
                         <th>Symbol</th>
                         <th>Action</th>
                         <th>Quantity</th>
@@ -441,7 +455,7 @@
                 </thead>
                 <tbody id="transactions-table-body">
                     <tr>
-                        <td colspan="9" style="text-align: center; color: #666;">Loading transactions...</td>
+                        <td colspan="10" style="text-align: center; color: #666;">Loading transactions...</td>
                     </tr>
                 </tbody>
             </table>
@@ -822,19 +836,45 @@
                 const data = await response.json();
 
                 const tbody = document.getElementById('transactions-table-body');
+                const filter = document.getElementById('tx-filter').value;
+                const limit = parseInt(document.getElementById('tx-limit').value);
 
                 if (data.error) {
-                    tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; color: #ff5252;">Error: ${data.error}</td></tr>`;
+                    tbody.innerHTML = `<tr><td colspan="10" style="text-align: center; color: #ff5252;">Error: ${data.error}</td></tr>`;
                     return;
                 }
 
                 if (!data.transactions || data.transactions.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: #666;">No transactions yet</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; color: #666;">No transactions yet</td></tr>';
                     return;
                 }
 
-                tbody.innerHTML = data.transactions.map(t => {
-                    const actionClass = t.action === 'BUY' ? 'positive' : 'negative';
+                // Filter transactions
+                let filtered = data.transactions;
+                if (filter !== 'all') {
+                    filtered = filtered.filter(t => {
+                        const assetType = t.asset_type || (t.action && t.action.startsWith('OPTIONS') ? 'options' : 'unknown');
+                        return assetType === filter;
+                    });
+                }
+
+                // Apply limit
+                filtered = filtered.slice(0, limit);
+
+                if (filtered.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; color: #666;">No transactions match filter</td></tr>';
+                    return;
+                }
+
+                // Asset type badge colors
+                const typeColors = {
+                    'crypto': { bg: 'rgba(255, 152, 0, 0.2)', color: '#ff9800' },
+                    'stock': { bg: 'rgba(76, 175, 80, 0.2)', color: '#4caf50' },
+                    'options': { bg: 'rgba(156, 39, 176, 0.2)', color: '#9c27b0' },
+                };
+
+                tbody.innerHTML = filtered.map(t => {
+                    const actionClass = t.action === 'BUY' || t.action.includes('BUY') ? 'positive' : 'negative';
                     const time = new Date(t.timestamp).toLocaleString();
                     const pnlDisplay = t.pnl !== undefined
                         ? `<span class="${t.pnl >= 0 ? 'positive' : 'negative'}">${formatCurrency(t.pnl)} (${t.pnl_pct >= 0 ? '+' : ''}${t.pnl_pct.toFixed(1)}%)</span>`
@@ -843,9 +883,16 @@
                         ? '<span style="color: #ff5252; font-size: 11px;"> (Failed)</span>'
                         : '';
 
+                    // Determine asset type
+                    let assetType = t.asset_type || 'unknown';
+                    if (assetType === 'unknown' && t.action && t.action.startsWith('OPTIONS')) assetType = 'options';
+                    const typeStyle = typeColors[assetType] || { bg: 'rgba(128, 128, 128, 0.2)', color: '#888' };
+                    const typeBadge = `<span style="background: ${typeStyle.bg}; color: ${typeStyle.color}; padding: 2px 6px; border-radius: 4px; font-size: 10px; text-transform: uppercase;">${assetType}</span>`;
+
                     return `
                         <tr>
                             <td style="font-size: 11px; white-space: nowrap;">${time}</td>
+                            <td>${typeBadge}</td>
                             <td><strong>${t.symbol}</strong></td>
                             <td class="${actionClass}" style="font-weight: 600;">${t.action}${statusBadge}</td>
                             <td>${t.quantity ? t.quantity.toFixed(4) : '-'}</td>
@@ -860,7 +907,7 @@
             } catch (error) {
                 console.error('Error fetching transactions:', error);
                 document.getElementById('transactions-table-body').innerHTML =
-                    '<tr><td colspan="9" style="text-align: center; color: #ff5252;">Failed to load transactions</td></tr>';
+                    '<tr><td colspan="10" style="text-align: center; color: #ff5252;">Failed to load transactions</td></tr>';
             }
         }
 

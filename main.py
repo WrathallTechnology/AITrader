@@ -516,7 +516,7 @@ class AITrader:
 
         # Execute trade
         if not self.dry_run:
-            self._execute_trade(symbol, signal, shares, current_price)
+            self._execute_trade(symbol, signal, shares, current_price, asset_type)
         else:
             logger.info(
                 f"[DRY RUN] Would {signal.signal_type.value} {shares:.2f} "
@@ -542,6 +542,14 @@ class AITrader:
                 logger.info("Max positions reached")
                 return False
 
+        # CHECK TOTAL EXPOSURE - Don't exceed initial_capital limit
+        if signal.signal_type == SignalType.BUY and config.trading.initial_capital is not None:
+            total_position_value = sum(float(p.market_value) for p in positions)
+            max_exposure = config.trading.initial_capital * 0.95  # Leave 5% buffer
+            if total_position_value >= max_exposure:
+                logger.info(f"Capital limit reached: ${total_position_value:,.2f} / ${config.trading.initial_capital:,.2f}")
+                return False
+
         # For small accounts (<$10k), skip complex correlation/sector checks
         # These are designed for larger diversified portfolios
         effective_capital = self.get_effective_capital()
@@ -564,7 +572,7 @@ class AITrader:
 
         return True
 
-    def _execute_trade(self, symbol: str, signal, shares: float, price: float):
+    def _execute_trade(self, symbol: str, signal, shares: float, price: float, asset_type: str = "stock"):
         """Execute a trade and log the transaction."""
         try:
             order = None
@@ -597,6 +605,7 @@ class AITrader:
                 save_transaction({
                     "timestamp": datetime.now().isoformat(),
                     "symbol": symbol,
+                    "asset_type": asset_type,
                     "action": "BUY",
                     "quantity": shares,
                     "price": price,
@@ -630,6 +639,7 @@ class AITrader:
                     save_transaction({
                         "timestamp": datetime.now().isoformat(),
                         "symbol": symbol,
+                        "asset_type": asset_type,
                         "action": "SELL",
                         "quantity": sell_qty,
                         "price": price,
@@ -649,6 +659,7 @@ class AITrader:
             save_transaction({
                 "timestamp": datetime.now().isoformat(),
                 "symbol": symbol,
+                "asset_type": asset_type,
                 "action": signal.signal_type.value.upper(),
                 "quantity": shares,
                 "price": price,
