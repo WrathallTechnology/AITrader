@@ -347,8 +347,60 @@
             </table>
         </div>
 
+        <!-- Options Scanner Section -->
+        <h2 class="section-title" style="margin-top: 30px;">Options Scanner</h2>
+        <div class="card">
+            <p style="color: #888; font-size: 12px; margin-bottom: 15px;">Scans top stocks for options opportunities (high IV, unusual volume, strategy signals)</p>
+            <table class="positions-table" id="options-scanner-table">
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Price</th>
+                        <th>Type</th>
+                        <th>Score</th>
+                        <th>Strategy</th>
+                        <th>Spread</th>
+                        <th>Confidence</th>
+                        <th>Expected P/L</th>
+                        <th>Rationale</th>
+                    </tr>
+                </thead>
+                <tbody id="options-scanner-table-body">
+                    <tr>
+                        <td colspan="9" style="text-align: center; color: #666;">Loading options scanner...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Options Positions Section -->
+        <h2 class="section-title" style="margin-top: 30px;">Options Positions</h2>
+        <div class="card">
+            <table class="positions-table" id="options-positions-table">
+                <thead>
+                    <tr>
+                        <th>Contract</th>
+                        <th>Underlying</th>
+                        <th>Strike</th>
+                        <th>Expiration</th>
+                        <th>Type</th>
+                        <th>Qty</th>
+                        <th>Avg Cost</th>
+                        <th>Value</th>
+                        <th>P&L</th>
+                        <th>DTE</th>
+                    </tr>
+                </thead>
+                <tbody id="options-positions-table-body">
+                    <tr>
+                        <td colspan="10" style="text-align: center; color: #666;">No options positions</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
         <!-- Positions Section -->
-        <h2 class="section-title" style="margin-top: 30px;">Positions</h2>
+        <h2 class="section-title" style="margin-top: 30px;">Stock/Crypto Positions</h2>
         <div class="card">
             <table class="positions-table">
                 <thead>
@@ -665,6 +717,104 @@
             return '$' + value.toFixed(0);
         }
 
+        // Update options scanner
+        async function updateOptionsScanner() {
+            try {
+                const response = await fetch('/api/options-scanner');
+                const data = await response.json();
+
+                const tbody = document.getElementById('options-scanner-table-body');
+
+                if (data.error) {
+                    tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; color: #ff5252;">Error: ${data.error}</td></tr>`;
+                    return;
+                }
+
+                if (!data.opportunities || data.opportunities.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: #666;">No options opportunities found (market may be closed)</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = data.opportunities.map(o => {
+                    const scoreColor = o.score >= 70 ? '#00c853' : o.score >= 50 ? '#ffc107' : '#888';
+                    const signal = o.signal;
+                    const hasSignal = signal !== null;
+
+                    // Format expected P/L
+                    let plDisplay = '-';
+                    if (hasSignal && signal.expected_profit !== null && signal.max_loss !== null) {
+                        plDisplay = `<span class="positive">+${formatCurrency(signal.expected_profit)}</span> / <span class="negative">${formatCurrency(signal.max_loss)}</span>`;
+                    }
+
+                    // Format opportunity type nicely
+                    const typeDisplay = o.opportunity_type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+
+                    return `
+                        <tr>
+                            <td><strong>${o.symbol}</strong></td>
+                            <td>${formatCurrency(o.underlying_price)}</td>
+                            <td><span style="background: rgba(79, 195, 247, 0.2); color: #4fc3f7; padding: 2px 8px; border-radius: 4px; font-size: 11px;">${typeDisplay}</span></td>
+                            <td style="color: ${scoreColor}; font-weight: 600;">${o.score}</td>
+                            <td>${hasSignal ? signal.strategy : '-'}</td>
+                            <td>${hasSignal ? signal.spread_type.replace(/_/g, ' ') : '-'}</td>
+                            <td>${hasSignal ? signal.confidence + '%' : '-'}</td>
+                            <td style="font-size: 11px;">${plDisplay}</td>
+                            <td style="font-size: 11px; color: #888; max-width: 250px;">${hasSignal ? signal.rationale : (o.details ? JSON.stringify(o.details).substring(0, 100) : '-')}</td>
+                        </tr>
+                    `;
+                }).join('');
+            } catch (error) {
+                console.error('Error fetching options scanner:', error);
+                document.getElementById('options-scanner-table-body').innerHTML =
+                    '<tr><td colspan="9" style="text-align: center; color: #ff5252;">Failed to load options scanner</td></tr>';
+            }
+        }
+
+        // Update options positions
+        async function updateOptionsPositions() {
+            try {
+                const response = await fetch('/api/options-positions');
+                const data = await response.json();
+
+                const tbody = document.getElementById('options-positions-table-body');
+
+                if (data.error && !data.positions) {
+                    tbody.innerHTML = `<tr><td colspan="10" style="text-align: center; color: #ff5252;">Error: ${data.error}</td></tr>`;
+                    return;
+                }
+
+                if (!data.positions || data.positions.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; color: #666;">No options positions</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = data.positions.map(p => {
+                    const pnlClass = p.unrealized_pnl >= 0 ? 'positive' : 'negative';
+                    const typeClass = p.option_type === 'call' ? 'positive' : 'negative';
+                    const dteWarning = p.days_to_expiration <= 7 ? 'color: #ff5252; font-weight: 600;' : '';
+
+                    return `
+                        <tr>
+                            <td style="font-size: 11px;"><strong>${p.symbol}</strong></td>
+                            <td>${p.underlying}</td>
+                            <td>${formatCurrency(p.strike)}</td>
+                            <td>${p.expiration}</td>
+                            <td class="${typeClass}" style="text-transform: uppercase;">${p.option_type}</td>
+                            <td>${p.quantity}</td>
+                            <td>${formatCurrency(p.avg_cost)}</td>
+                            <td>${p.market_value ? formatCurrency(p.market_value) : '-'}</td>
+                            <td class="${pnlClass}">${p.unrealized_pnl ? formatCurrency(p.unrealized_pnl) : '-'}</td>
+                            <td style="${dteWarning}">${p.days_to_expiration}d</td>
+                        </tr>
+                    `;
+                }).join('');
+            } catch (error) {
+                console.error('Error fetching options positions:', error);
+                document.getElementById('options-positions-table-body').innerHTML =
+                    '<tr><td colspan="10" style="text-align: center; color: #666;">No options positions</td></tr>';
+            }
+        }
+
         // Update transactions
         async function updateTransactions() {
             try {
@@ -720,6 +870,8 @@
                 updateStatus(),
                 updateSignals(),
                 updateScanner(),
+                updateOptionsScanner(),
+                updateOptionsPositions(),
                 updatePositions(),
                 updateTransactions(),
                 updateLogs(),

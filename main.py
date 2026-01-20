@@ -395,21 +395,71 @@ class AITrader:
 
     def _run_options_cycle(self):
         """Run one cycle of options trading."""
-        logger.debug("Running options trading cycle...")
+        logger.info("Running options trading cycle...")
 
+        # Run scanner on first cycle or every 10 minutes
+        should_scan = not hasattr(self, "_last_options_scan") or \
+                      (datetime.now() - self._last_options_scan).total_seconds() > 600
+
+        if should_scan:
+            logger.info("Running options scanner to find opportunities...")
+            try:
+                # Determine market trend based on SPY
+                market_trend = self._detect_market_trend()
+
+                opportunities = self.options_scanner.get_top_opportunities(
+                    count=10,
+                    market_trend=market_trend,
+                )
+
+                if opportunities:
+                    logger.info(f"Options scanner found {len(opportunities)} opportunities:")
+                    for opp in opportunities[:5]:
+                        signal_info = ""
+                        if opp.signal:
+                            signal_info = f" - {opp.signal.spread_type.value} ({opp.signal.confidence:.0%})"
+                        logger.info(f"  {opp.symbol}: {opp.opportunity_type} score={opp.score:.0f}{signal_info}")
+
+                    # Evaluate top opportunities for trading
+                    for opp in opportunities:
+                        if opp.signal and opp.score >= 60:
+                            self._evaluate_options_trade(opp)
+                else:
+                    logger.info("No options opportunities found")
+
+                self._last_options_scan = datetime.now()
+            except Exception as e:
+                logger.warning(f"Options scan failed: {e}")
+        else:
+            logger.debug("Skipping options scan (within 10 min window)")
+
+    def _detect_market_trend(self) -> str:
+        """Detect overall market trend using SPY."""
         try:
-            # Scan for opportunities
-            opportunities = self.options_scanner.get_top_opportunities(
-                count=5,
-                market_trend="neutral",  # TODO: integrate with market regime detection
+            df = self.data_fetcher.get_historical_bars(
+                symbol="SPY",
+                timeframe="1Hour",
+                days=5,
+                use_cache=True,
             )
+            if df is None or len(df) < 20:
+                return "neutral"
 
-            for opp in opportunities:
-                if opp.signal and opp.score >= 60:
-                    self._evaluate_options_trade(opp)
+            df = DataProcessor.add_technical_indicators(df)
+            latest = df.iloc[-1]
 
-        except Exception as e:
-            logger.error(f"Error in options cycle: {e}")
+            # Simple trend detection
+            rsi = latest.get("rsi", 50)
+            sma_20 = latest.get("sma_20", latest["close"])
+            current_price = latest["close"]
+
+            if rsi > 60 and current_price > sma_20:
+                return "bullish"
+            elif rsi < 40 and current_price < sma_20:
+                return "bearish"
+            return "neutral"
+        except Exception:
+            return "neutral"
 
     def _analyze_and_trade(self, symbol: str, asset_type: str):
         """Analyze a symbol and execute trade if signal generated."""
@@ -613,13 +663,19 @@ class AITrader:
         if not signal:
             return
 
+        from src.options import OptionOrder, OrderAction
+
         # Check risk limits
         account = self.client.get_account()
         account_value = float(account.portfolio_value)
 
-        for contract in signal.contracts:
-            from src.options import OptionOrder, OrderAction
+        # Use initial_capital if set
+        if config.trading.initial_capital is not None:
+            account_value = config.trading.initial_capital
 
+        # Build orders for all contracts in the signal
+        orders_to_submit = []
+        for contract in signal.contracts:
             order = OptionOrder(
                 contract=contract,
                 action=OrderAction.BUY_TO_OPEN,
@@ -631,18 +687,73 @@ class AITrader:
 
             if not passes:
                 for v in violations:
-                    logger.info(f"Options risk violation: {v}")
+                    logger.info(f"Options risk violation for {contract.symbol}: {v}")
                 return
 
-        # Log opportunity (actual execution would go here)
+            orders_to_submit.append(order)
+
+        # Log opportunity
         logger.info(
             f"Options opportunity: {opportunity.symbol} - {signal.spread_type.value} "
-            f"(score: {opportunity.score:.1f})"
+            f"(score: {opportunity.score:.1f}, confidence: {signal.confidence:.0%})"
         )
 
-        if not self.dry_run:
-            # TODO: Implement actual options order submission
-            logger.info("[OPTIONS] Order execution not yet implemented")
+        if self.dry_run:
+            logger.info(f"[DRY RUN] Would execute {signal.spread_type.value} on {opportunity.symbol}")
+            for order in orders_to_submit:
+                logger.info(f"  {order.action.value}: {order.contract.symbol} @ ${order.limit_price:.2f}")
+            return
+
+        # Execute the options trade
+        try:
+            for order in orders_to_submit:
+                order_id = self.options_client.submit_order(order)
+
+                if order_id:
+                    logger.info(f"Options order submitted: {order_id} - {order.contract.symbol}")
+
+                    # Log the transaction
+                    save_transaction({
+                        "timestamp": datetime.now().isoformat(),
+                        "symbol": order.contract.symbol,
+                        "underlying": order.contract.underlying,
+                        "action": f"OPTIONS_{order.action.value}",
+                        "option_type": order.contract.option_type.value if hasattr(order.contract.option_type, 'value') else str(order.contract.option_type),
+                        "strike": order.contract.strike,
+                        "expiration": str(order.contract.expiration),
+                        "quantity": order.quantity,
+                        "price": order.limit_price,
+                        "value": round(order.limit_price * order.quantity * 100, 2),
+                        "confidence": round(signal.confidence * 100, 1),
+                        "reason": signal.rationale,
+                        "spread_type": signal.spread_type.value if hasattr(signal.spread_type, 'value') else str(signal.spread_type),
+                        "expected_profit": signal.expected_profit,
+                        "max_loss": signal.max_loss,
+                        "order_id": order_id,
+                        "status": "submitted",
+                    })
+                else:
+                    logger.error(f"Failed to submit options order for {order.contract.symbol}")
+                    save_transaction({
+                        "timestamp": datetime.now().isoformat(),
+                        "symbol": order.contract.symbol,
+                        "underlying": order.contract.underlying,
+                        "action": f"OPTIONS_{order.action.value}",
+                        "reason": signal.rationale,
+                        "status": "failed",
+                        "error": "Order submission returned None",
+                    })
+
+        except Exception as e:
+            logger.error(f"Error executing options trade: {e}")
+            save_transaction({
+                "timestamp": datetime.now().isoformat(),
+                "symbol": opportunity.symbol,
+                "action": "OPTIONS_TRADE",
+                "reason": signal.rationale,
+                "status": "failed",
+                "error": str(e),
+            })
 
     def _check_risk_state(self):
         """Check and log current risk state."""

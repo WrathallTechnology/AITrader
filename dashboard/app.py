@@ -24,6 +24,7 @@ from src.data.processor import DataProcessor
 from src.data.crypto_scanner import CryptoScanner
 from src.strategies import TechnicalStrategy, MLStrategy, HybridStrategy
 from src.risk import DrawdownProtection, CircuitBreaker
+from src.options import OptionsClient, OptionsScanner, OptionsStrategyManager
 
 app = Flask(__name__)
 
@@ -40,6 +41,15 @@ CACHE_DURATION = 30  # seconds
 def get_client():
     """Get Alpaca client."""
     return AlpacaClient(config.alpaca)
+
+
+def get_options_client():
+    """Get Options client for options trading."""
+    return OptionsClient(
+        api_key=config.alpaca.api_key,
+        secret_key=config.alpaca.secret_key,
+        paper=config.alpaca.is_paper,
+    )
 
 
 def get_account_info():
@@ -338,6 +348,153 @@ def api_transactions():
             transactions = list(reversed(transactions[-100:]))
             return jsonify({"transactions": transactions})
         return jsonify({"transactions": []})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# Stock watchlist for options scanning
+OPTIONS_WATCHLIST = [
+    "AAPL", "MSFT", "GOOGL", "AMZN", "META",
+    "NVDA", "TSLA", "AMD", "SPY", "QQQ",
+]
+
+
+@app.route("/api/options-scanner")
+def api_options_scanner():
+    """Get options scanner opportunities."""
+    try:
+        options_client = get_options_client()
+        scanner = OptionsScanner(
+            client=options_client,
+            watchlist=OPTIONS_WATCHLIST,
+        )
+
+        # Get market trend from request args or default to neutral
+        market_trend = "neutral"
+
+        opportunities = scanner.get_top_opportunities(
+            count=10,
+            market_trend=market_trend,
+        )
+
+        return jsonify({
+            "opportunities": [
+                {
+                    "symbol": o.symbol,
+                    "underlying_price": round(o.underlying_price, 2),
+                    "opportunity_type": o.opportunity_type,
+                    "score": round(o.score, 0),
+                    "details": o.details,
+                    "signal": {
+                        "strategy": o.signal.strategy_name,
+                        "spread_type": o.signal.spread_type.value if hasattr(o.signal.spread_type, 'value') else str(o.signal.spread_type),
+                        "confidence": round(o.signal.confidence * 100, 1),
+                        "expected_profit": round(o.signal.expected_profit, 2) if o.signal.expected_profit else None,
+                        "max_loss": round(o.signal.max_loss, 2) if o.signal.max_loss else None,
+                        "rationale": o.signal.rationale,
+                        "contracts": [
+                            {
+                                "symbol": c.symbol,
+                                "strike": c.strike,
+                                "expiration": c.expiration.isoformat() if hasattr(c.expiration, 'isoformat') else str(c.expiration),
+                                "option_type": c.option_type.value if hasattr(c.option_type, 'value') else str(c.option_type),
+                                "bid": c.bid,
+                                "ask": c.ask,
+                                "delta": round(c.delta, 3) if c.delta else None,
+                                "iv": round(c.implied_volatility * 100, 1) if c.implied_volatility else None,
+                            }
+                            for c in o.signal.contracts
+                        ] if o.signal.contracts else [],
+                    } if o.signal else None,
+                }
+                for o in opportunities
+            ],
+            "watchlist": OPTIONS_WATCHLIST,
+            "market_trend": market_trend,
+            "timestamp": datetime.now().isoformat(),
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/options-positions")
+def api_options_positions():
+    """Get current options positions."""
+    try:
+        options_client = get_options_client()
+        positions = options_client.get_positions()
+
+        return jsonify({
+            "positions": [
+                {
+                    "symbol": p.contract.symbol,
+                    "underlying": p.contract.underlying,
+                    "strike": p.contract.strike,
+                    "expiration": p.contract.expiration.isoformat() if hasattr(p.contract.expiration, 'isoformat') else str(p.contract.expiration),
+                    "option_type": p.contract.option_type.value if hasattr(p.contract.option_type, 'value') else str(p.contract.option_type),
+                    "quantity": p.quantity,
+                    "avg_cost": round(p.avg_cost, 2),
+                    "market_value": round(p.market_value, 2) if p.market_value else None,
+                    "unrealized_pnl": round(p.unrealized_pnl, 2) if p.unrealized_pnl else None,
+                    "delta_exposure": round(p.delta_exposure, 2) if p.delta_exposure else None,
+                    "days_to_expiration": p.contract.days_to_expiration,
+                }
+                for p in positions
+            ],
+            "timestamp": datetime.now().isoformat(),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e), "positions": []})
+
+
+@app.route("/api/options-chain/<symbol>")
+def api_options_chain(symbol: str):
+    """Get options chain for a symbol."""
+    try:
+        options_client = get_options_client()
+
+        # Get chain with 7-60 DTE range
+        chain = options_client.get_option_chain(
+            underlying=symbol.upper(),
+            expiration_date_gte=(datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d"),
+            expiration_date_lte=(datetime.now() + timedelta(days=60)).strftime("%Y-%m-%d"),
+        )
+
+        if not chain:
+            return jsonify({"error": f"No options chain found for {symbol}"}), 404
+
+        # Get ATM contracts for summary
+        atm_strike = chain.get_atm_strike()
+        calls = chain.get_calls()
+        puts = chain.get_puts()
+
+        return jsonify({
+            "symbol": symbol.upper(),
+            "underlying_price": round(chain.underlying_price, 2),
+            "atm_strike": atm_strike,
+            "expirations": [exp.isoformat() for exp in chain.expirations],
+            "contracts_count": len(chain.contracts),
+            "calls_count": len(calls),
+            "puts_count": len(puts),
+            "sample_contracts": [
+                {
+                    "symbol": c.symbol,
+                    "strike": c.strike,
+                    "expiration": c.expiration.isoformat() if hasattr(c.expiration, 'isoformat') else str(c.expiration),
+                    "option_type": c.option_type.value if hasattr(c.option_type, 'value') else str(c.option_type),
+                    "bid": c.bid,
+                    "ask": c.ask,
+                    "volume": c.volume,
+                    "open_interest": c.open_interest,
+                    "iv": round(c.implied_volatility * 100, 1) if c.implied_volatility else None,
+                    "delta": round(c.delta, 3) if c.delta else None,
+                }
+                for c in chain.contracts[:20]  # First 20 contracts as sample
+            ],
+            "timestamp": datetime.now().isoformat(),
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
