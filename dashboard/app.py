@@ -264,17 +264,36 @@ def api_orders():
 
 @app.route("/api/signals")
 def api_signals():
-    """Get current signals for watched symbols."""
+    """Get current signals for all watched symbols (stocks + crypto)."""
     try:
-        symbols = ["BTC/USD", "ETH/USD"]
-        signals = []
+        # All watchlist symbols
+        stock_symbols = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "AMD", "SPY", "QQQ"]
+        crypto_symbols = ["BTC/USD", "ETH/USD"]
 
-        for symbol in symbols:
+        signals = []
+        client = get_client()
+        market_open = client.is_market_open()
+
+        # Get crypto signals (always available)
+        for symbol in crypto_symbols:
             analysis = analyze_symbol(symbol)
-            if analysis:
+            if analysis and "error" not in analysis:
+                analysis["asset_type"] = "crypto"
                 signals.append(analysis)
 
-        return jsonify({"signals": signals})
+        # Get stock signals (only when market is open, or use cached data)
+        if market_open:
+            for symbol in stock_symbols:
+                analysis = analyze_symbol(symbol)
+                if analysis and "error" not in analysis:
+                    analysis["asset_type"] = "stock"
+                    signals.append(analysis)
+
+        return jsonify({
+            "signals": signals,
+            "market_open": market_open,
+            "timestamp": datetime.now().isoformat(),
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

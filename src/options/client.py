@@ -153,13 +153,22 @@ class OptionsClient:
     def _parse_contract(self, contract_data) -> Optional[OptionContract]:
         """Parse Alpaca contract data into our model."""
         try:
+            # Ensure open_interest is an int (API may return string or None)
+            open_interest = contract_data.open_interest
+            if open_interest is None:
+                open_interest = 0
+            elif isinstance(open_interest, str):
+                open_interest = int(open_interest) if open_interest.isdigit() else 0
+            else:
+                open_interest = int(open_interest)
+
             return OptionContract(
                 symbol=contract_data.symbol,
                 underlying=contract_data.underlying_symbol,
                 option_type=OptionType(contract_data.type.lower()),
                 strike=float(contract_data.strike_price),
                 expiration=contract_data.expiration_date,
-                open_interest=contract_data.open_interest or 0,
+                open_interest=open_interest,
             )
         except Exception as e:
             logger.debug(f"Failed to parse contract: {e}")

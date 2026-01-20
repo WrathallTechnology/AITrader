@@ -252,8 +252,15 @@ class OptionsScanner:
         unusual = []
 
         for contract in chain.contracts:
-            if contract.open_interest > 0:
-                volume_ratio = contract.volume / contract.open_interest
+            # Ensure numeric types for comparison (API may return strings)
+            try:
+                volume = int(contract.volume) if contract.volume else 0
+                open_interest = int(contract.open_interest) if contract.open_interest else 0
+            except (ValueError, TypeError):
+                continue
+
+            if open_interest > 0 and volume > 0:
+                volume_ratio = volume / open_interest
                 if volume_ratio >= threshold:
                     unusual.append(contract)
 
