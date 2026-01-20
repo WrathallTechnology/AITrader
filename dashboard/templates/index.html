@@ -314,12 +314,38 @@
             </div>
         </div>
 
-        <!-- Signals Section -->
-        <h2 class="section-title">Market Signals</h2>
-        <div id="signals-container">
-            <div class="signal-card loading">
-                <p style="color: #666; text-align: center;">Loading signals...</p>
+        <!-- Watchlist Signals Section -->
+        <h2 class="section-title">Watchlist Signals</h2>
+        <div class="card">
+            <div style="display: flex; gap: 10px; margin-bottom: 15px; align-items: center;">
+                <p style="color: #888; font-size: 12px; margin: 0;">Technical & ML signals for all watched assets</p>
+                <select id="signals-filter" onchange="updateSignals()" style="background: #2a2a2a; color: #fff; border: 1px solid #444; padding: 4px 8px; border-radius: 4px; font-size: 12px;">
+                    <option value="all">All Assets</option>
+                    <option value="crypto">Crypto Only</option>
+                    <option value="stock">Stocks Only</option>
+                </select>
+                <span id="market-status" style="margin-left: auto; font-size: 11px; padding: 3px 8px; border-radius: 4px;"></span>
             </div>
+            <table class="positions-table" id="signals-table">
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Type</th>
+                        <th>Price</th>
+                        <th>24h</th>
+                        <th>RSI</th>
+                        <th>MACD</th>
+                        <th>Technical</th>
+                        <th>ML</th>
+                        <th>Reason</th>
+                    </tr>
+                </thead>
+                <tbody id="signals-table-body">
+                    <tr>
+                        <td colspan="9" style="text-align: center; color: #666;">Loading signals...</td>
+                    </tr>
+                </tbody>
+            </table>
         </div>
 
         <!-- Scanner Section -->
@@ -530,96 +556,97 @@
             }
         }
 
-        // Update signals
+        // Update signals - new table format
         async function updateSignals() {
             try {
                 const response = await fetch('/api/signals');
                 const data = await response.json();
 
-                const container = document.getElementById('signals-container');
-                container.innerHTML = '';
+                const tbody = document.getElementById('signals-table-body');
+                const filter = document.getElementById('signals-filter').value;
+                const marketStatus = document.getElementById('market-status');
 
-                for (const signal of data.signals) {
-                    if (signal.error) continue;
+                // Update market status indicator
+                if (data.market_open) {
+                    marketStatus.textContent = 'Market Open';
+                    marketStatus.style.background = 'rgba(0, 200, 83, 0.2)';
+                    marketStatus.style.color = '#00c853';
+                } else {
+                    marketStatus.textContent = 'Market Closed';
+                    marketStatus.style.background = 'rgba(255, 193, 7, 0.2)';
+                    marketStatus.style.color = '#ffc107';
+                }
 
-                    const techConf = signal.technical_signal.confidence;
-                    const mlConf = signal.ml_signal.confidence;
+                if (data.error) {
+                    tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; color: #ff5252;">Error: ${data.error}</td></tr>`;
+                    return;
+                }
 
-                    const html = `
-                        <div class="signal-card">
-                            <div class="signal-header">
-                                <div>
-                                    <span class="signal-symbol">${signal.symbol}</span>
-                                    <span class="signal-price">${formatCurrency(signal.current_price)}</span>
-                                    <span class="${signal.change_24h >= 0 ? 'positive' : 'negative'}" style="font-size: 14px; margin-left: 10px;">
-                                        ${formatPercent(signal.change_24h)} (24h)
-                                    </span>
-                                </div>
-                            </div>
+                // Filter signals by asset type
+                let signals = data.signals || [];
+                if (filter !== 'all') {
+                    signals = signals.filter(s => s.asset_type === filter);
+                }
 
-                            <div class="indicators-grid">
-                                <div class="indicator">
-                                    <div class="indicator-label">RSI</div>
-                                    <div class="indicator-value ${signal.indicators.rsi < 30 ? 'positive' : signal.indicators.rsi > 70 ? 'negative' : ''}">${signal.indicators.rsi || '-'}</div>
-                                </div>
-                                <div class="indicator">
-                                    <div class="indicator-label">MACD</div>
-                                    <div class="indicator-value ${signal.indicators.macd > 0 ? 'positive' : 'negative'}">${signal.indicators.macd || '-'}</div>
-                                </div>
-                                <div class="indicator">
-                                    <div class="indicator-label">Volatility</div>
-                                    <div class="indicator-value">${signal.indicators.volatility ? signal.indicators.volatility + '%' : '-'}</div>
-                                </div>
-                                <div class="indicator">
-                                    <div class="indicator-label">SMA 20</div>
-                                    <div class="indicator-value">${signal.indicators.sma_20 ? formatCurrency(signal.indicators.sma_20) : '-'}</div>
-                                </div>
-                                <div class="indicator">
-                                    <div class="indicator-label">SMA 50</div>
-                                    <div class="indicator-value">${signal.indicators.sma_50 ? formatCurrency(signal.indicators.sma_50) : '-'}</div>
-                                </div>
-                                <div class="indicator">
-                                    <div class="indicator-label">ATR</div>
-                                    <div class="indicator-value">${signal.indicators.atr || '-'}</div>
-                                </div>
-                            </div>
+                if (signals.length === 0) {
+                    const message = filter === 'stock' && !data.market_open
+                        ? 'Stock market closed - no stock signals available'
+                        : 'No signals available';
+                    tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; color: #666;">${message}</td></tr>`;
+                    return;
+                }
 
-                            <div class="signals-section">
-                                <div class="signal-row">
-                                    <span class="signal-row-label">Technical Analysis</span>
-                                    <div class="signal-row-value">
-                                        <div class="confidence-bar">
-                                            <div class="confidence-fill" style="width: ${techConf}%; background: ${getConfidenceColor(techConf)};"></div>
-                                        </div>
-                                        <span style="width: 50px; text-align: right;">${techConf}%</span>
-                                        <span class="signal-type ${getSignalClass(signal.technical_signal.type)}">${signal.technical_signal.type.toUpperCase()}</span>
-                                    </div>
-                                </div>
-                                <div class="signal-row">
-                                    <span class="signal-row-label">ML Prediction</span>
-                                    <div class="signal-row-value">
-                                        <div class="confidence-bar">
-                                            <div class="confidence-fill" style="width: ${mlConf}%; background: ${getConfidenceColor(mlConf)};"></div>
-                                        </div>
-                                        <span style="width: 50px; text-align: right;">${mlConf}%</span>
-                                        <span class="signal-type ${getSignalClass(signal.ml_signal.type)}">${signal.ml_signal.type.toUpperCase()}</span>
-                                    </div>
-                                </div>
-                                <div style="margin-top: 10px; font-size: 12px; color: #666;">
-                                    <strong>Technical:</strong> ${signal.technical_signal.reason}<br>
-                                    <strong>ML:</strong> ${signal.ml_signal.reason}
-                                </div>
-                            </div>
-                        </div>
+                // Asset type badge colors
+                const typeColors = {
+                    'crypto': { bg: 'rgba(255, 152, 0, 0.2)', color: '#ff9800' },
+                    'stock': { bg: 'rgba(76, 175, 80, 0.2)', color: '#4caf50' },
+                };
+
+                tbody.innerHTML = signals.map(s => {
+                    if (s.error) return '';
+
+                    const changeClass = s.change_24h >= 0 ? 'positive' : 'negative';
+                    const rsiClass = s.indicators.rsi < 30 ? 'positive' : s.indicators.rsi > 70 ? 'negative' : '';
+                    const macdClass = s.indicators.macd > 0 ? 'positive' : 'negative';
+
+                    const typeStyle = typeColors[s.asset_type] || { bg: 'rgba(128, 128, 128, 0.2)', color: '#888' };
+                    const typeBadge = `<span style="background: ${typeStyle.bg}; color: ${typeStyle.color}; padding: 2px 6px; border-radius: 4px; font-size: 10px; text-transform: uppercase;">${s.asset_type}</span>`;
+
+                    // Technical signal badge
+                    const techType = s.technical_signal.type;
+                    const techConf = s.technical_signal.confidence;
+                    const techClass = techType === 'buy' ? 'positive' : techType === 'sell' ? 'negative' : 'neutral';
+                    const techBadge = `<span class="${techClass}" style="font-weight: 600;">${techType.toUpperCase()}</span> <span style="color: #888; font-size: 11px;">${techConf}%</span>`;
+
+                    // ML signal badge
+                    const mlType = s.ml_signal.type;
+                    const mlConf = s.ml_signal.confidence;
+                    const mlClass = mlType === 'buy' ? 'positive' : mlType === 'sell' ? 'negative' : 'neutral';
+                    const mlBadge = mlType !== 'N/A'
+                        ? `<span class="${mlClass}" style="font-weight: 600;">${mlType.toUpperCase()}</span> <span style="color: #888; font-size: 11px;">${mlConf}%</span>`
+                        : '<span style="color: #666;">-</span>';
+
+                    // Combine reasons, prefer technical for display
+                    const reason = s.technical_signal.reason || s.ml_signal.reason || '-';
+
+                    return `
+                        <tr>
+                            <td><strong>${s.symbol}</strong></td>
+                            <td>${typeBadge}</td>
+                            <td>${formatCurrency(s.current_price)}</td>
+                            <td class="${changeClass}">${formatPercent(s.change_24h)}</td>
+                            <td class="${rsiClass}">${s.indicators.rsi || '-'}</td>
+                            <td class="${macdClass}">${s.indicators.macd ? s.indicators.macd.toFixed(4) : '-'}</td>
+                            <td>${techBadge}</td>
+                            <td>${mlBadge}</td>
+                            <td style="font-size: 11px; color: #888; max-width: 200px;">${reason}</td>
+                        </tr>
                     `;
-                    container.innerHTML += html;
-                }
-
-                if (data.signals.length === 0) {
-                    container.innerHTML = '<div class="signal-card"><p style="color: #666; text-align: center;">No signals available</p></div>';
-                }
+                }).join('');
             } catch (error) {
                 console.error('Error fetching signals:', error);
+                document.getElementById('signals-table-body').innerHTML =
+                    '<tr><td colspan="9" style="text-align: center; color: #ff5252;">Failed to load signals</td></tr>';
             }
         }
 
