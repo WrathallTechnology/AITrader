@@ -131,11 +131,15 @@ class OptionsScanner:
             expiration_date_lte=date.today() + timedelta(days=criteria.max_dte),
         )
 
+        logger.debug(f"scan_symbol: {symbol} - got {len(chain.contracts)} contracts, price=${chain.underlying_price:.2f}")
+
         if not chain.contracts:
+            logger.debug(f"scan_symbol: {symbol} - no contracts found")
             return []
 
         # Check underlying price
         if not (criteria.min_underlying_price <= chain.underlying_price <= criteria.max_underlying_price):
+            logger.debug(f"scan_symbol: {symbol} - price ${chain.underlying_price:.2f} outside range")
             return []
 
         # Calculate IV metrics

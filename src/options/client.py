@@ -196,23 +196,30 @@ class OptionsClient:
     def _get_underlying_price(self, symbol: str) -> float:
         """Get current price of underlying."""
         try:
-            # Use trading client to get latest trade
+            # Use trading client to get latest trade with IEX feed (free tier)
             from alpaca.data.historical import StockHistoricalDataClient
             from alpaca.data.requests import StockLatestTradeRequest
+            from alpaca.data.enums import DataFeed
 
             stock_client = StockHistoricalDataClient(
                 api_key=self.trading_client._api_key,
                 secret_key=self.trading_client._secret_key,
             )
 
-            request = StockLatestTradeRequest(symbol_or_symbols=symbol)
+            # Use IEX feed for free tier compatibility
+            request = StockLatestTradeRequest(
+                symbol_or_symbols=symbol,
+                feed=DataFeed.IEX,
+            )
             trades = stock_client.get_stock_latest_trade(request)
 
             if symbol in trades:
-                return float(trades[symbol].price)
+                price = float(trades[symbol].price)
+                logger.debug(f"Got underlying price for {symbol}: ${price:.2f}")
+                return price
 
         except Exception as e:
-            logger.debug(f"Failed to get underlying price for {symbol}: {e}")
+            logger.warning(f"Failed to get underlying price for {symbol}: {e}")
 
         return 0.0
 
@@ -358,8 +365,8 @@ class OptionsClient:
         min_days: int = 7,
         max_days: int = 45,
         delta_target: Optional[float] = None,
-        min_open_interest: int = 100,
-        max_spread_pct: float = 0.10,
+        min_open_interest: int = 10,  # Lowered from 100 to 10
+        max_spread_pct: float = 0.20,  # Relaxed from 0.10 to 0.20
     ) -> list[OptionContract]:
         """
         Find suitable option contracts based on criteria.
@@ -387,22 +394,34 @@ class OptionsClient:
             option_type=option_type,
         )
 
+        logger.debug(f"find_contracts: {underlying} {option_type.value} - got {len(chain.contracts)} contracts")
+
         # Filter contracts
         suitable = []
+        filtered_oi = 0
+        filtered_spread = 0
+        filtered_liquidity = 0
+
         for contract in chain.contracts:
-            # Check open interest
-            if contract.open_interest < min_open_interest:
+            # Check open interest (relaxed - allow 0 if we have bid/ask)
+            if contract.open_interest < min_open_interest and contract.bid <= 0:
+                filtered_oi += 1
                 continue
 
-            # Check spread
-            if contract.spread_pct > max_spread_pct:
-                continue
-
-            # Check liquidity (has valid bid/ask)
-            if contract.bid <= 0 or contract.ask <= 0:
-                continue
+            # Check spread (only if we have valid bid/ask)
+            if contract.bid > 0 and contract.ask > 0:
+                if contract.spread_pct > max_spread_pct:
+                    filtered_spread += 1
+                    continue
+            else:
+                # No bid/ask yet - skip unless we have open interest
+                if contract.open_interest < min_open_interest:
+                    filtered_liquidity += 1
+                    continue
 
             suitable.append(contract)
+
+        logger.debug(f"find_contracts: {underlying} - filtered OI:{filtered_oi}, spread:{filtered_spread}, liquidity:{filtered_liquidity}, remaining:{len(suitable)}")
 
         # Sort by delta closeness if target specified
         if delta_target and suitable:
@@ -417,7 +436,7 @@ class OptionsClient:
             suitable.sort(key=delta_distance)
         else:
             # Sort by liquidity (volume * open_interest)
-            suitable.sort(key=lambda c: c.volume * c.open_interest, reverse=True)
+            suitable.sort(key=lambda c: (c.volume or 0) * (c.open_interest or 0), reverse=True)
 
         return suitable
 
