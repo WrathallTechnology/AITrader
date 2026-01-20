@@ -70,11 +70,13 @@ class DataFetcher:
                     end=end,
                 )
             else:
+                # Use IEX feed (free tier) instead of SIP (requires paid subscription)
                 bars = self.client.get_stock_bars(
                     symbols=[symbol],
                     timeframe=timeframe,
                     start=start,
                     end=end,
+                    feed="iex",
                 )
 
             # Convert to DataFrame

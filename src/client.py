@@ -19,6 +19,7 @@ from alpaca.trading.requests import (
 from alpaca.trading.enums import OrderSide, TimeInForce, OrderStatus, AssetClass, QueryOrderStatus
 from alpaca.data.historical import StockHistoricalDataClient, CryptoHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest, CryptoBarsRequest
+from alpaca.data.enums import DataFeed
 from alpaca.data.timeframe import TimeFrame
 
 from config import AlpacaConfig
@@ -245,6 +246,7 @@ class AlpacaClient:
         timeframe: str,
         start: datetime,
         end: Optional[datetime] = None,
+        feed: str = "iex",
     ):
         """
         Get historical stock bars.
@@ -254,14 +256,20 @@ class AlpacaClient:
             timeframe: '1Min', '5Min', '15Min', '1Hour', '1Day'
             start: Start datetime
             end: End datetime (defaults to now)
+            feed: Data feed - 'iex' (free) or 'sip' (paid subscription required)
         """
         tf = self._parse_timeframe(timeframe)
+
+        # Use IEX feed by default (free tier compatible)
+        # SIP requires a paid market data subscription
+        data_feed = DataFeed.IEX if feed.lower() == "iex" else DataFeed.SIP
 
         request = StockBarsRequest(
             symbol_or_symbols=symbols,
             timeframe=tf,
             start=start,
             end=end,
+            feed=data_feed,
         )
 
         return self.stock_data.get_stock_bars(request)
