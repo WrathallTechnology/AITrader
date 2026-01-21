@@ -446,7 +446,7 @@ class AITrader:
             logger.debug("Skipping options scan (within 10 min window)")
 
     def _detect_market_trend(self) -> str:
-        """Detect overall market trend using SPY."""
+        """Detect overall market trend using SPY historical data."""
         try:
             df = self.data_fetcher.get_historical_bars(
                 symbol="SPY",
@@ -460,17 +460,49 @@ class AITrader:
             df = DataProcessor.add_technical_indicators(df)
             latest = df.iloc[-1]
 
-            # Simple trend detection
+            # Trend detection using multiple indicators
             rsi = latest.get("rsi", 50)
             sma_20 = latest.get("sma_20", latest["close"])
+            sma_50 = latest.get("sma_50", latest["close"])
+            macd = latest.get("macd", 0)
+            macd_signal = latest.get("macd_signal", 0)
             current_price = latest["close"]
 
-            if rsi > 60 and current_price > sma_20:
+            # Score-based trend detection (more nuanced than strict thresholds)
+            bullish_signals = 0
+            bearish_signals = 0
+
+            # RSI signals (relaxed thresholds)
+            if rsi > 55:
+                bullish_signals += 1
+            elif rsi < 45:
+                bearish_signals += 1
+
+            # Price vs SMA signals
+            if current_price > sma_20:
+                bullish_signals += 1
+            elif current_price < sma_20:
+                bearish_signals += 1
+
+            if sma_20 > sma_50:
+                bullish_signals += 1
+            elif sma_20 < sma_50:
+                bearish_signals += 1
+
+            # MACD signal
+            if macd > macd_signal:
+                bullish_signals += 1
+            elif macd < macd_signal:
+                bearish_signals += 1
+
+            # Determine trend (need at least 2 signals for direction)
+            if bullish_signals >= 2 and bullish_signals > bearish_signals:
                 return "bullish"
-            elif rsi < 40 and current_price < sma_20:
+            elif bearish_signals >= 2 and bearish_signals > bullish_signals:
                 return "bearish"
             return "neutral"
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Trend detection failed: {e}")
             return "neutral"
 
     def _analyze_and_trade(self, symbol: str, asset_type: str):

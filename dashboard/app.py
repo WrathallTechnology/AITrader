@@ -378,6 +378,63 @@ OPTIONS_WATCHLIST = [
 ]
 
 
+def detect_market_trend() -> str:
+    """Detect market trend from SPY historical data."""
+    try:
+        client = get_client()
+        fetcher = DataFetcher(client)
+
+        df = fetcher.get_historical_bars(
+            symbol="SPY",
+            timeframe="1Hour",
+            days=5,
+        )
+        if df is None or len(df) < 20:
+            return "neutral"
+
+        df = DataProcessor.add_technical_indicators(df)
+        latest = df.iloc[-1]
+
+        # Score-based trend detection
+        rsi = latest.get("rsi", 50)
+        sma_20 = latest.get("sma_20", latest["close"])
+        sma_50 = latest.get("sma_50", latest["close"])
+        macd = latest.get("macd", 0)
+        macd_signal = latest.get("macd_signal", 0)
+        current_price = latest["close"]
+
+        bullish_signals = 0
+        bearish_signals = 0
+
+        if rsi > 55:
+            bullish_signals += 1
+        elif rsi < 45:
+            bearish_signals += 1
+
+        if current_price > sma_20:
+            bullish_signals += 1
+        elif current_price < sma_20:
+            bearish_signals += 1
+
+        if sma_20 > sma_50:
+            bullish_signals += 1
+        elif sma_20 < sma_50:
+            bearish_signals += 1
+
+        if macd > macd_signal:
+            bullish_signals += 1
+        elif macd < macd_signal:
+            bearish_signals += 1
+
+        if bullish_signals >= 2 and bullish_signals > bearish_signals:
+            return "bullish"
+        elif bearish_signals >= 2 and bearish_signals > bullish_signals:
+            return "bearish"
+        return "neutral"
+    except Exception:
+        return "neutral"
+
+
 @app.route("/api/options-scanner")
 def api_options_scanner():
     """Get options scanner opportunities."""
@@ -388,8 +445,8 @@ def api_options_scanner():
             watchlist=OPTIONS_WATCHLIST,
         )
 
-        # Get market trend from request args or default to neutral
-        market_trend = "neutral"
+        # Detect market trend from historical data
+        market_trend = detect_market_trend()
 
         # Check if market is open
         client = get_client()
@@ -669,18 +726,57 @@ def api_options_debug():
             })
             debug_info["errors"].append(traceback.format_exc())
 
-        # Test 6: Run scanner on single symbol
+        # Test 6: Run scanner on single symbol with different trends
         try:
             scanner = OptionsScanner(client=options_client, watchlist=[test_symbol])
             from src.options.scanner import ScanCriteria
+
+            # Calculate IV metrics for diagnostics
+            avg_iv = scanner._calculate_avg_iv(chain)
+            iv_rank = scanner._calculate_iv_rank(test_symbol, avg_iv)
+
+            debug_info["iv_analysis"] = {
+                "avg_iv": round(avg_iv * 100, 2),
+                "iv_rank": round(iv_rank, 2),
+                "iv_interpretation": (
+                    "High IV (>70% rank) - good for selling premium"
+                    if iv_rank >= 0.7 else
+                    "Low IV (<30% rank) - good for buying volatility"
+                    if iv_rank <= 0.3 else
+                    "Normal IV - strategies limited"
+                ),
+            }
+
+            # Detect trend from historical data
+            detected_trend = detect_market_trend()
+            debug_info["detected_trend"] = detected_trend
+
             criteria = ScanCriteria(min_open_interest=10, max_spread_pct=0.20)
-            opportunities = scanner.scan_symbol(test_symbol, criteria, market_trend="neutral")
+
+            # Scan with detected trend
+            opportunities = scanner.scan_symbol(test_symbol, criteria, market_trend=detected_trend)
 
             debug_info["tests"].append({
                 "name": f"Scan Single Symbol ({test_symbol})",
                 "passed": True,
-                "result": f"Found {len(opportunities)} opportunities",
+                "result": f"Found {len(opportunities)} opportunities (trend: {detected_trend})",
             })
+
+            # Explain why no opportunities if none found
+            if not opportunities:
+                debug_info["scan_diagnostics"] = {
+                    "detected_trend": detected_trend,
+                    "why_no_opportunities": [
+                        f"Detected trend: {detected_trend}",
+                        f"IV Rank = {iv_rank:.2f} (need >=0.7 for high IV or <=0.3 for low IV opportunities)",
+                        f"Avg IV = {avg_iv:.2%} (IncomeStrategy needs IV > 20%)",
+                        "No unusual volume detected (need volume/OI ratio >= 2.0)",
+                    ] + (["DirectionalStrategy skipped (trend is neutral)"] if detected_trend == "neutral" else []),
+                    "suggestions": [
+                        "Try running when market has clearer directional movement",
+                        "Scanner works best with active trading and clear trends",
+                    ],
+                }
 
             if opportunities:
                 debug_info["scanner_results"] = [
@@ -689,6 +785,7 @@ def api_options_debug():
                         "score": o.score,
                         "signal": o.signal.strategy_name if o.signal else None,
                         "spread_type": o.signal.spread_type.value if o.signal else None,
+                        "rationale": o.signal.rationale if o.signal else str(o.details),
                     }
                     for o in opportunities[:5]
                 ]

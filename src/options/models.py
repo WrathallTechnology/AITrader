@@ -91,11 +91,25 @@ class OptionContract:
     implied_volatility: Optional[float] = None
 
     @property
-    def mid_price(self) -> float:
-        """Get mid-point between bid and ask."""
-        if self.bid > 0 and self.ask > 0:
+    def mid_price(self) -> Optional[float]:
+        """Get mid-point between bid and ask.
+
+        Returns None if bid/ask data is invalid or missing.
+        """
+        if self.bid > 0 and self.ask > 0 and self.bid < self.ask:
             return (self.bid + self.ask) / 2
-        return self.last or 0.0
+        return None
+
+    @property
+    def is_tradeable(self) -> bool:
+        """Check if contract has valid quote data for trading.
+
+        A contract is tradeable if it has:
+        - Valid bid > 0
+        - Valid ask > 0
+        - Bid < ask (proper market)
+        """
+        return self.bid > 0 and self.ask > 0 and self.bid < self.ask
 
     @property
     def spread(self) -> float:
@@ -103,10 +117,12 @@ class OptionContract:
         return self.ask - self.bid if self.ask > self.bid else 0.0
 
     @property
-    def spread_pct(self) -> float:
+    def spread_pct(self) -> Optional[float]:
         """Get spread as percentage of mid price."""
         mid = self.mid_price
-        return self.spread / mid if mid > 0 else 0.0
+        if mid is not None and mid > 0:
+            return self.spread / mid
+        return None
 
     @property
     def days_to_expiration(self) -> int:
@@ -120,9 +136,12 @@ class OptionContract:
         return False
 
     @property
-    def contract_value(self) -> float:
+    def contract_value(self) -> Optional[float]:
         """Total value of one contract at mid price."""
-        return self.mid_price * self.multiplier
+        mid = self.mid_price
+        if mid is not None:
+            return mid * self.multiplier
+        return None
 
     def intrinsic_value(self, underlying_price: float) -> float:
         """Calculate intrinsic value given underlying price."""
@@ -131,9 +150,12 @@ class OptionContract:
         else:
             return max(0, self.strike - underlying_price)
 
-    def extrinsic_value(self, underlying_price: float) -> float:
+    def extrinsic_value(self, underlying_price: float) -> Optional[float]:
         """Calculate extrinsic (time) value."""
-        return max(0, self.mid_price - self.intrinsic_value(underlying_price))
+        mid = self.mid_price
+        if mid is not None:
+            return max(0, mid - self.intrinsic_value(underlying_price))
+        return None
 
     def moneyness(self, underlying_price: float) -> float:
         """

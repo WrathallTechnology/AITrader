@@ -164,6 +164,10 @@ class DirectionalStrategy(OptionsStrategy):
             SpreadType.LONG_CALL if trend == "bullish" else SpreadType.LONG_PUT
         )
 
+        contract_value = best_contract.contract_value
+        if contract_value is None:
+            return None
+
         return StrategySignal(
             strategy_name=self.name,
             underlying=underlying,
@@ -172,7 +176,7 @@ class DirectionalStrategy(OptionsStrategy):
             contracts=[best_contract],
             confidence=0.6,
             expected_profit=None,  # Unlimited for long calls
-            max_loss=best_contract.contract_value,
+            max_loss=contract_value,
             rationale=f"{trend.capitalize()} trend detected, buying {option_type.value} at ${best_contract.strike}",
         )
 
@@ -199,7 +203,11 @@ class DirectionalStrategy(OptionsStrategy):
             )
 
             if short_contract and short_contract.strike > long_contract.strike:
-                net_debit = long_contract.mid_price - short_contract.mid_price
+                long_mid = long_contract.mid_price
+                short_mid = short_contract.mid_price
+                if long_mid is None or short_mid is None:
+                    return None
+                net_debit = long_mid - short_mid
                 max_profit = (short_contract.strike - long_contract.strike) - net_debit
                 max_loss = net_debit * 100
 
@@ -223,7 +231,11 @@ class DirectionalStrategy(OptionsStrategy):
             )
 
             if short_contract and short_contract.strike < long_contract.strike:
-                net_debit = long_contract.mid_price - short_contract.mid_price
+                long_mid = long_contract.mid_price
+                short_mid = short_contract.mid_price
+                if long_mid is None or short_mid is None:
+                    return None
+                net_debit = long_mid - short_mid
                 max_profit = (long_contract.strike - short_contract.strike) - net_debit
                 max_loss = net_debit * 100
 
@@ -335,6 +347,8 @@ class IncomeStrategy(OptionsStrategy):
 
         # Calculate premium yield
         premium = best.mid_price
+        if premium is None:
+            return None
         strike = best.strike
         premium_yield = premium / strike
 
@@ -400,11 +414,16 @@ class IncomeStrategy(OptionsStrategy):
 
         contracts = [short_put, long_put, short_call, long_call]
 
-        # Calculate premium received
-        premium = (
-            short_put.mid_price + short_call.mid_price
-            - long_put.mid_price - long_call.mid_price
-        )
+        # Calculate premium received - all contracts must have valid mid prices
+        sp_mid = short_put.mid_price
+        sc_mid = short_call.mid_price
+        lp_mid = long_put.mid_price
+        lc_mid = long_call.mid_price
+        if any(m is None for m in [sp_mid, sc_mid, lp_mid, lc_mid]):
+            logger.debug("Iron condor: missing mid prices for one or more legs")
+            return None
+
+        premium = sp_mid + sc_mid - lp_mid - lc_mid
 
         max_profit = premium * 100
         max_loss = (width * 100) - max_profit
@@ -505,12 +524,17 @@ class VolatilityStrategy(OptionsStrategy):
         if not call or not put:
             return None
 
+        call_mid = call.mid_price
+        put_mid = put.mid_price
+        if call_mid is None or put_mid is None:
+            return None
+
         # Cost of straddle
-        total_cost = (call.mid_price + put.mid_price) * 100
+        total_cost = (call_mid + put_mid) * 100
 
         # Breakeven points
-        upper_breakeven = atm_strike + call.mid_price + put.mid_price
-        lower_breakeven = atm_strike - call.mid_price - put.mid_price
+        upper_breakeven = atm_strike + call_mid + put_mid
+        lower_breakeven = atm_strike - call_mid - put_mid
 
         return StrategySignal(
             strategy_name=self.name,
@@ -555,8 +579,13 @@ class VolatilityStrategy(OptionsStrategy):
         short_put = min(puts, key=lambda c: abs(c.strike - put_strike))
         short_call = min(calls, key=lambda c: abs(c.strike - call_strike))
 
+        put_mid = short_put.mid_price
+        call_mid = short_call.mid_price
+        if put_mid is None or call_mid is None:
+            return None
+
         # Premium received
-        premium = (short_put.mid_price + short_call.mid_price) * 100
+        premium = (put_mid + call_mid) * 100
 
         return StrategySignal(
             strategy_name=self.name,

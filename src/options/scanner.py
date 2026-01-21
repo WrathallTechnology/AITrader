@@ -146,6 +146,8 @@ class OptionsScanner:
         avg_iv = self._calculate_avg_iv(chain)
         iv_rank = self._calculate_iv_rank(symbol, avg_iv)
 
+        logger.debug(f"scan_symbol: {symbol} - avg_iv={avg_iv:.2%}, iv_rank={iv_rank:.2f}, trend={market_trend}")
+
         # High IV opportunity (premium selling)
         if iv_rank >= 0.7 and criteria.min_iv_rank <= iv_rank <= criteria.max_iv_rank:
             opp = self._create_high_iv_opportunity(

@@ -184,11 +184,21 @@ class OptionsClient:
             quotes = self.data_client.get_option_latest_quote(request)
 
             # Update contracts with quote data
+            quotes_found = 0
+            valid_quotes = 0
             for contract in contracts:
                 if contract.symbol in quotes:
+                    quotes_found += 1
                     quote = quotes[contract.symbol]
-                    contract.bid = float(quote.bid_price or 0)
-                    contract.ask = float(quote.ask_price or 0)
+                    bid = float(quote.bid_price or 0)
+                    ask = float(quote.ask_price or 0)
+                    contract.bid = bid
+                    contract.ask = ask
+                    # Track valid quotes
+                    if bid > 0 and ask > 0 and bid < ask:
+                        valid_quotes += 1
+
+            logger.debug(f"_update_quotes: {len(contracts)} contracts, {quotes_found} quotes found, {valid_quotes} valid (bid>0, ask>0, bid<ask)")
 
         except Exception as e:
             logger.debug(f"Failed to update quotes: {e}")
@@ -315,7 +325,11 @@ class OptionsClient:
                 )
             else:
                 if order.limit_price is None:
-                    order.limit_price = order.contract.mid_price
+                    mid = order.contract.mid_price
+                    if mid is None:
+                        logger.error(f"Cannot submit limit order - no valid mid price for {order.contract.symbol}")
+                        return None
+                    order.limit_price = mid
 
                 request = LimitOrderRequest(
                     symbol=order.contract.symbol,
@@ -398,30 +412,32 @@ class OptionsClient:
 
         # Filter contracts
         suitable = []
+        filtered_not_tradeable = 0
         filtered_oi = 0
         filtered_spread = 0
-        filtered_liquidity = 0
 
         for contract in chain.contracts:
-            # Check open interest (relaxed - allow 0 if we have bid/ask)
-            if contract.open_interest < min_open_interest and contract.bid <= 0:
+            # First check: contract must be tradeable (valid bid/ask)
+            if not contract.is_tradeable:
+                # Allow contracts without quotes only if they have good open interest
+                if contract.open_interest < min_open_interest:
+                    filtered_not_tradeable += 1
+                    continue
+
+            # Check open interest
+            if contract.open_interest < min_open_interest:
                 filtered_oi += 1
                 continue
 
-            # Check spread (only if we have valid bid/ask)
-            if contract.bid > 0 and contract.ask > 0:
-                if contract.spread_pct > max_spread_pct:
-                    filtered_spread += 1
-                    continue
-            else:
-                # No bid/ask yet - skip unless we have open interest
-                if contract.open_interest < min_open_interest:
-                    filtered_liquidity += 1
-                    continue
+            # Check spread (only for tradeable contracts)
+            spread_pct = contract.spread_pct
+            if spread_pct is not None and spread_pct > max_spread_pct:
+                filtered_spread += 1
+                continue
 
             suitable.append(contract)
 
-        logger.debug(f"find_contracts: {underlying} - filtered OI:{filtered_oi}, spread:{filtered_spread}, liquidity:{filtered_liquidity}, remaining:{len(suitable)}")
+        logger.debug(f"find_contracts: {underlying} - filtered not_tradeable:{filtered_not_tradeable}, OI:{filtered_oi}, spread:{filtered_spread}, remaining:{len(suitable)}")
 
         # Sort by delta closeness if target specified
         if delta_target and suitable:
@@ -453,6 +469,8 @@ class OptionsClient:
         """
         contract = order.contract
         price = order.limit_price or contract.mid_price
+        if price is None:
+            return None, None
         cost = price * order.quantity * contract.multiplier
 
         if order.action == OrderAction.BUY_TO_OPEN:

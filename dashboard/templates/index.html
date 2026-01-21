@@ -1126,10 +1126,45 @@
                 if (data.chain_sample) detailData.chain_sample = data.chain_sample;
                 if (data.suitable_contracts) detailData.suitable_contracts = data.suitable_contracts;
                 if (data.scanner_results) detailData.scanner_results = data.scanner_results;
+                if (data.iv_analysis) detailData.iv_analysis = data.iv_analysis;
+                if (data.scan_diagnostics) detailData.scan_diagnostics = data.scan_diagnostics;
 
                 if (Object.keys(detailData).length > 0) {
                     details.style.display = 'block';
-                    document.getElementById('debug-json').textContent = JSON.stringify(detailData, null, 2);
+
+                    // Format IV Analysis nicely if present
+                    let detailsHtml = '';
+                    if (data.iv_analysis) {
+                        const iv = data.iv_analysis;
+                        detailsHtml += `<div style="background: #1a1a2a; padding: 10px; border-radius: 6px; margin-bottom: 10px;">
+                            <strong style="color: #4fc3f7;">IV Analysis:</strong>
+                            <div style="margin-top: 5px; font-size: 12px;">
+                                <div>Avg IV: <span style="color: #fff;">${iv.avg_iv}%</span></div>
+                                <div>IV Rank: <span style="color: #fff;">${iv.iv_rank}</span></div>
+                                <div style="color: #ffc107;">${iv.iv_interpretation}</div>
+                            </div>
+                        </div>`;
+                    }
+
+                    // Format scan diagnostics if no opportunities
+                    if (data.scan_diagnostics) {
+                        const diag = data.scan_diagnostics;
+                        detailsHtml += `<div style="background: rgba(255, 193, 7, 0.1); border: 1px solid #ffc107; padding: 10px; border-radius: 6px; margin-bottom: 10px;">
+                            <strong style="color: #ffc107;">Why No Opportunities Found:</strong>
+                            <ul style="margin: 5px 0 0 20px; font-size: 12px; color: #888;">
+                                ${diag.why_no_opportunities.map(r => `<li>${r}</li>`).join('')}
+                            </ul>
+                            <div style="margin-top: 10px;"><strong style="color: #4fc3f7;">Suggestions:</strong></div>
+                            <ul style="margin: 5px 0 0 20px; font-size: 12px; color: #888;">
+                                ${diag.suggestions.map(s => `<li>${s}</li>`).join('')}
+                            </ul>
+                        </div>`;
+                    }
+
+                    // Add raw JSON for other details
+                    detailsHtml += `<pre style="color: #4fc3f7; font-size: 11px; white-space: pre-wrap; margin-top: 10px;">${JSON.stringify(detailData, null, 2)}</pre>`;
+
+                    document.getElementById('debug-json').innerHTML = detailsHtml;
                 } else {
                     details.style.display = 'none';
                 }
