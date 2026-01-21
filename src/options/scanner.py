@@ -14,6 +14,16 @@ from .strategies import StrategySignal, OptionsStrategyManager
 logger = logging.getLogger(__name__)
 
 
+def get_sentiment_strategy():
+    """Lazy-load sentiment strategy to avoid circular imports."""
+    try:
+        from src.strategies.sentiment import SentimentStrategy
+        return SentimentStrategy()
+    except ImportError as e:
+        logger.debug(f"Sentiment strategy not available: {e}")
+        return None
+
+
 @dataclass
 class OptionOpportunity:
     """A scanned options opportunity."""
@@ -66,6 +76,7 @@ class OptionsScanner:
         self,
         client: OptionsClient,
         watchlist: Optional[list[str]] = None,
+        use_sentiment: bool = True,
     ):
         self.client = client
         self.watchlist = watchlist or [
@@ -77,9 +88,49 @@ class OptionsScanner:
         # Cache for IV history (for IV rank calculation)
         self._iv_history: dict[str, list[float]] = {}
 
+        # Sentiment analysis
+        self.use_sentiment = use_sentiment
+        self._sentiment_strategy = None
+        if use_sentiment:
+            self._sentiment_strategy = get_sentiment_strategy()
+            if self._sentiment_strategy:
+                logger.info("Sentiment analysis enabled for options scanner")
+
     def set_watchlist(self, symbols: list[str]) -> None:
         """Update the watchlist."""
         self.watchlist = symbols
+
+    def get_sentiment(self, symbol: str) -> tuple[float, float, str]:
+        """
+        Get sentiment analysis for a symbol.
+
+        Args:
+            symbol: Stock symbol
+
+        Returns:
+            Tuple of (sentiment_score, confidence, trend_direction)
+            trend_direction is "bullish", "bearish", or "neutral"
+        """
+        if not self._sentiment_strategy:
+            return 0.0, 0.0, "neutral"
+
+        try:
+            score, confidence = self._sentiment_strategy.fetch_and_analyze_news(symbol)
+
+            # Determine trend from sentiment
+            if score > 0.2 and confidence > 0.3:
+                trend = "bullish"
+            elif score < -0.2 and confidence > 0.3:
+                trend = "bearish"
+            else:
+                trend = "neutral"
+
+            logger.debug(f"Sentiment for {symbol}: score={score:.2f}, confidence={confidence:.2f}, trend={trend}")
+            return score, confidence, trend
+
+        except Exception as e:
+            logger.debug(f"Failed to get sentiment for {symbol}: {e}")
+            return 0.0, 0.0, "neutral"
 
     def scan_all(
         self,
@@ -146,22 +197,52 @@ class OptionsScanner:
         avg_iv = self._calculate_avg_iv(chain)
         iv_rank = self._calculate_iv_rank(symbol, avg_iv)
 
-        logger.debug(f"scan_symbol: {symbol} - avg_iv={avg_iv:.2%}, iv_rank={iv_rank:.2f}, trend={market_trend}")
+        # Get news sentiment for this symbol
+        sentiment_score, sentiment_conf, sentiment_trend = self.get_sentiment(symbol)
 
-        # High IV opportunity (premium selling)
-        if iv_rank >= 0.7 and criteria.min_iv_rank <= iv_rank <= criteria.max_iv_rank:
+        # Combine technical trend with sentiment
+        # If sentiment has high confidence and disagrees with technical, use sentiment
+        # If sentiment agrees with technical, boost confidence
+        effective_trend = market_trend
+        sentiment_boost = 0.0
+
+        if sentiment_conf > 0.4:
+            if sentiment_trend != "neutral":
+                if market_trend == "neutral":
+                    # Technical neutral but sentiment has direction - use sentiment
+                    effective_trend = sentiment_trend
+                    logger.debug(f"scan_symbol: {symbol} - using sentiment trend '{sentiment_trend}' (technical was neutral)")
+                elif sentiment_trend == market_trend:
+                    # Agreement - boost opportunity scores
+                    sentiment_boost = sentiment_conf * 10  # Up to 10 point boost
+                    logger.debug(f"scan_symbol: {symbol} - sentiment agrees with technical, boost={sentiment_boost:.1f}")
+                else:
+                    # Disagreement - reduce confidence, stick with technical
+                    sentiment_boost = -5  # Penalty for conflicting signals
+                    logger.debug(f"scan_symbol: {symbol} - sentiment conflicts with technical (sentiment={sentiment_trend}, technical={market_trend})")
+
+        logger.debug(f"scan_symbol: {symbol} - avg_iv={avg_iv:.2%}, iv_rank={iv_rank:.2f}, trend={effective_trend}, sentiment={sentiment_score:.2f}")
+
+        # High IV opportunity (premium selling) - relaxed from 0.7 to 0.5
+        if iv_rank >= 0.5 and criteria.min_iv_rank <= iv_rank <= criteria.max_iv_rank:
             opp = self._create_high_iv_opportunity(
-                symbol, chain, avg_iv, iv_rank, market_trend
+                symbol, chain, avg_iv, iv_rank, effective_trend
             )
             if opp:
+                opp.score = max(0, min(100, opp.score + sentiment_boost))
+                opp.details["sentiment_score"] = sentiment_score
+                opp.details["sentiment_confidence"] = sentiment_conf
                 opportunities.append(opp)
 
-        # Low IV opportunity (volatility buying)
-        if iv_rank <= 0.3:
+        # Low IV opportunity (volatility buying) - relaxed from 0.3 to 0.4
+        if iv_rank <= 0.4:
             opp = self._create_low_iv_opportunity(
-                symbol, chain, avg_iv, iv_rank, market_trend
+                symbol, chain, avg_iv, iv_rank, effective_trend
             )
             if opp:
+                opp.score = max(0, min(100, opp.score + sentiment_boost))
+                opp.details["sentiment_score"] = sentiment_score
+                opp.details["sentiment_confidence"] = sentiment_conf
                 opportunities.append(opp)
 
         # Unusual volume
@@ -171,6 +252,16 @@ class OptionsScanner:
                 symbol, chain, unusual_contracts
             )
             if opp:
+                opp.details["sentiment_score"] = sentiment_score
+                opp.details["sentiment_confidence"] = sentiment_conf
+                opportunities.append(opp)
+
+        # News-driven opportunity (strong sentiment with high confidence)
+        if abs(sentiment_score) > 0.4 and sentiment_conf > 0.5:
+            opp = self._create_sentiment_opportunity(
+                symbol, chain, sentiment_score, sentiment_conf, sentiment_trend
+            )
+            if opp:
                 opportunities.append(opp)
 
         # Check for strategy signals
@@ -178,11 +269,12 @@ class OptionsScanner:
             underlying=symbol,
             underlying_price=chain.underlying_price,
             volatility=avg_iv,
-            trend=market_trend,
+            trend=effective_trend,  # Use sentiment-adjusted trend
         )
 
         for signal in signals:
-            score = signal.confidence * 100
+            # Apply sentiment boost to strategy scores
+            score = max(0, min(100, (signal.confidence * 100) + sentiment_boost))
             opportunities.append(OptionOpportunity(
                 symbol=symbol,
                 underlying_price=chain.underlying_price,
@@ -195,6 +287,8 @@ class OptionsScanner:
                     "rationale": signal.rationale,
                     "expected_profit": signal.expected_profit,
                     "max_loss": signal.max_loss,
+                    "sentiment_score": sentiment_score,
+                    "sentiment_confidence": sentiment_conf,
                 },
             ))
 
@@ -379,6 +473,47 @@ class OptionsScanner:
                 "sentiment": sentiment,
                 "most_unusual": str(most_unusual),
                 "suggestion": f"Unusual {sentiment} activity detected - investigate before trading",
+            },
+        )
+
+    def _create_sentiment_opportunity(
+        self,
+        symbol: str,
+        chain: OptionChain,
+        sentiment_score: float,
+        sentiment_conf: float,
+        sentiment_trend: str,
+    ) -> Optional[OptionOpportunity]:
+        """Create opportunity based on strong news sentiment."""
+        # Get a directional signal based on sentiment
+        signal = self.strategy_manager.get_best_signal(
+            underlying=symbol,
+            underlying_price=chain.underlying_price,
+            volatility=0.30,  # Use moderate IV assumption
+            trend=sentiment_trend,
+        )
+
+        # Score based on sentiment strength and confidence
+        score = abs(sentiment_score) * sentiment_conf * 100
+
+        direction = "bullish" if sentiment_score > 0 else "bearish"
+
+        if sentiment_trend == "bullish":
+            suggestion = "Strong bullish news sentiment - consider bull call spreads or long calls"
+        else:
+            suggestion = "Strong bearish news sentiment - consider bear put spreads or long puts"
+
+        return OptionOpportunity(
+            symbol=symbol,
+            underlying_price=chain.underlying_price,
+            opportunity_type="news_sentiment",
+            signal=signal,
+            score=score,
+            details={
+                "sentiment_score": sentiment_score,
+                "sentiment_confidence": sentiment_conf,
+                "direction": direction,
+                "suggestion": suggestion,
             },
         )
 

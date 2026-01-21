@@ -234,6 +234,35 @@ class SentimentStrategy(BaseStrategy):
         self.analyzer = SentimentAnalyzer()
         self._sentiment_cache: dict[str, deque[SentimentData]] = {}
         self._is_trained = True  # No training required
+        self._news_provider = None  # Lazy loaded
+
+    @property
+    def news_provider(self):
+        """Lazy-load news provider."""
+        if self._news_provider is None:
+            self._news_provider = get_news_provider()
+        return self._news_provider
+
+    def fetch_and_analyze_news(self, symbol: str, count: int = 10) -> tuple[float, float]:
+        """
+        Fetch latest news for a symbol and analyze sentiment.
+
+        Args:
+            symbol: Stock symbol
+            count: Number of headlines to fetch
+
+        Returns:
+            Tuple of (sentiment_score, confidence)
+        """
+        try:
+            headlines = self.news_provider.get_headlines(symbol, count=count)
+            if headlines and headlines[0] != f"No news available for {symbol}":
+                self.add_headlines(symbol, headlines)
+                logger.info(f"Analyzed {len(headlines)} headlines for {symbol}")
+            return self.get_current_sentiment(symbol)
+        except Exception as e:
+            logger.error(f"Failed to fetch news for {symbol}: {e}")
+            return 0.0, 0.0
 
     def add_sentiment_data(self, data: SentimentData) -> None:
         """Add sentiment data point for a symbol."""
@@ -426,3 +455,17 @@ class MockNewsProvider:
         if symbol in self.SAMPLE_HEADLINES:
             return self.SAMPLE_HEADLINES[symbol][:count]
         return [f"No news available for {symbol}"]
+
+
+def get_news_provider():
+    """
+    Get the appropriate news provider.
+
+    Returns real Alpaca news provider if available, falls back to mock.
+    """
+    try:
+        from src.data.news import NewsProvider
+        return NewsProvider()
+    except ImportError:
+        logger.warning("Alpaca news provider not available, using mock")
+        return MockNewsProvider()

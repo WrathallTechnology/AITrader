@@ -223,6 +223,11 @@ class AITrader:
         self.circuit_breaker: Optional[CircuitBreaker] = None
         self.position_sizer: Optional[PositionSizer] = None
 
+        # Track orders placed within current cycle to prevent over-trading
+        # This is reset at the start of each cycle
+        self._cycle_orders_value: float = 0.0
+        self._cycle_orders_count: int = 0
+
         # For crypto-only mode with small capital, use relaxed limits
         # For mixed portfolios, you'd want stricter limits
         self.correlation_manager = PortfolioCorrelationManager(
@@ -365,6 +370,10 @@ class AITrader:
         """Run one cycle of stock trading."""
         logger.info("Running stock trading cycle...")
 
+        # Reset cycle order tracking
+        self._cycle_orders_value = 0.0
+        self._cycle_orders_count = 0
+
         for symbol in self.stock_watchlist:
             try:
                 self._analyze_and_trade(symbol, "stock")
@@ -374,6 +383,10 @@ class AITrader:
     def _run_crypto_cycle(self):
         """Run one cycle of crypto trading."""
         logger.info("Running crypto trading cycle...")
+
+        # Reset cycle order tracking
+        self._cycle_orders_value = 0.0
+        self._cycle_orders_count = 0
 
         # Run scanner on first cycle (no _last_crypto_scan) or every 10 minutes
         should_scan = not hasattr(self, "_last_crypto_scan") or \
@@ -406,6 +419,10 @@ class AITrader:
     def _run_options_cycle(self):
         """Run one cycle of options trading."""
         logger.info("Running options trading cycle...")
+
+        # Reset cycle order tracking
+        self._cycle_orders_value = 0.0
+        self._cycle_orders_count = 0
 
         # Run scanner on first cycle or every 10 minutes
         should_scan = not hasattr(self, "_last_options_scan") or \
@@ -559,19 +576,23 @@ class AITrader:
             return
 
         # CAP trade value to remaining capital if initial_capital is set
+        # Include in-cycle orders that may not be reflected in positions yet
         if config.trading.initial_capital is not None and signal.signal_type == SignalType.BUY:
             positions = self.client.get_all_positions()
             total_position_value = sum(float(p.market_value) for p in positions)
-            remaining_capital = config.trading.initial_capital - total_position_value
+
+            # CRITICAL: Include orders placed this cycle
+            total_committed = total_position_value + self._cycle_orders_value
+            remaining_capital = config.trading.initial_capital - total_committed
 
             proposed_value = shares * current_price
             if proposed_value > remaining_capital:
                 # Cap to remaining capital (with small buffer for fees)
                 max_shares = (remaining_capital * 0.98) / current_price
                 if max_shares < 0.0001:  # Too small to trade
-                    logger.info(f"Remaining capital ${remaining_capital:.2f} too small for {symbol}")
+                    logger.info(f"Remaining capital ${remaining_capital:.2f} too small for {symbol} (committed: positions=${total_position_value:.2f} + cycle=${self._cycle_orders_value:.2f})")
                     return
-                logger.info(f"Capping {symbol} trade from {shares:.4f} to {max_shares:.4f} shares (remaining capital: ${remaining_capital:.2f})")
+                logger.info(f"Capping {symbol} trade from {shares:.4f} to {max_shares:.4f} shares (remaining: ${remaining_capital:.2f})")
                 shares = max_shares
 
         # Execute trade
@@ -603,23 +624,28 @@ class AITrader:
                 return False
 
         # CHECK TOTAL EXPOSURE - Don't exceed initial_capital limit
-        # This check happens BEFORE position sizing, so we estimate max potential trade
+        # Include BOTH existing positions AND orders placed this cycle (not yet reflected in positions)
         if signal.signal_type == SignalType.BUY and config.trading.initial_capital is not None:
             total_position_value = sum(float(p.market_value) for p in positions)
-            # Estimate this trade could use up to max_position_pct of capital
-            max_single_trade = config.trading.initial_capital * config.trading.default_position_size_pct
-            projected_total = total_position_value + max_single_trade
 
-            if total_position_value >= config.trading.initial_capital:
-                logger.info(f"Capital limit EXCEEDED: ${total_position_value:,.2f} / ${config.trading.initial_capital:,.2f} - blocking all new buys")
+            # CRITICAL: Add in-cycle orders that may not be reflected in positions yet
+            total_committed = total_position_value + self._cycle_orders_value
+
+            # Calculate remaining capital
+            remaining = config.trading.initial_capital - total_committed
+
+            logger.debug(f"Capital check: positions=${total_position_value:.2f} + cycle_orders=${self._cycle_orders_value:.2f} = ${total_committed:.2f}")
+
+            if total_committed >= config.trading.initial_capital:
+                logger.info(f"Capital limit REACHED: ${total_committed:,.2f} / ${config.trading.initial_capital:,.2f} (includes ${self._cycle_orders_value:.2f} from this cycle)")
                 return False
-            elif projected_total > config.trading.initial_capital:
-                # Allow smaller trades but log warning
-                remaining = config.trading.initial_capital - total_position_value
-                logger.info(f"Capital usage: ${total_position_value:,.2f} / ${config.trading.initial_capital:,.2f} (${remaining:,.2f} remaining)")
-                if remaining < 100:  # Less than $100 remaining
-                    logger.info("Insufficient remaining capital for meaningful trade")
-                    return False
+
+            if remaining < 100:  # Less than $100 remaining
+                logger.info(f"Insufficient remaining capital: ${remaining:.2f} (positions=${total_position_value:.2f}, cycle_orders=${self._cycle_orders_value:.2f})")
+                return False
+
+            # Log capital status
+            logger.info(f"Capital: ${total_committed:,.2f} / ${config.trading.initial_capital:,.2f} used (${remaining:,.2f} remaining)")
 
         # For small accounts (<$10k), skip complex correlation/sector checks
         # These are designed for larger diversified portfolios
@@ -671,6 +697,12 @@ class AITrader:
                     time_in_force="day",
                 )
                 logger.info(f"BUY order submitted: {order.id if order else 'FAILED'}")
+
+                # Track this order in the cycle to prevent over-trading
+                if order:
+                    self._cycle_orders_value += trade_value
+                    self._cycle_orders_count += 1
+                    logger.info(f"Cycle orders: {self._cycle_orders_count} orders, ${self._cycle_orders_value:.2f} total")
 
                 # Log the transaction
                 save_transaction({

@@ -16,7 +16,7 @@ fi
 
 # Start in screen session
 echo "Starting AITrader..."
-screen -dmS trader python main.py --mode all
+screen -dmS trader python main.py --mode options
 
 echo "=============================================="
 echo "AITrader started in background!"

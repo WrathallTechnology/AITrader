@@ -852,6 +852,156 @@ def api_logs_filter():
         return jsonify({"error": str(e), "logs": []}), 500
 
 
+@app.route("/api/news/<symbol>")
+def api_news(symbol):
+    """Get news and sentiment for a symbol."""
+    try:
+        from src.data.news import AlpacaNewsClient
+        from src.strategies.sentiment import SentimentAnalyzer
+
+        news_client = AlpacaNewsClient()
+        analyzer = SentimentAnalyzer()
+
+        # Get recent news
+        articles = news_client.get_news(symbol, limit=10)
+
+        # Analyze sentiment for each headline
+        analyzed = []
+        total_score = 0
+        total_conf = 0
+
+        for article in articles:
+            sentiment = analyzer.analyze_text(article.headline, symbol)
+            analyzed.append({
+                "headline": article.headline,
+                "source": article.source,
+                "url": article.url,
+                "created_at": article.created_at.isoformat(),
+                "sentiment_score": sentiment.sentiment_score,
+                "sentiment_confidence": sentiment.confidence,
+            })
+            total_score += sentiment.sentiment_score * sentiment.confidence
+            total_conf += sentiment.confidence
+
+        # Calculate aggregate sentiment
+        if total_conf > 0:
+            aggregate_score = total_score / total_conf
+            aggregate_conf = total_conf / len(articles)
+        else:
+            aggregate_score = 0
+            aggregate_conf = 0
+
+        # Determine trend
+        if aggregate_score > 0.2 and aggregate_conf > 0.3:
+            trend = "bullish"
+        elif aggregate_score < -0.2 and aggregate_conf > 0.3:
+            trend = "bearish"
+        else:
+            trend = "neutral"
+
+        return jsonify({
+            "symbol": symbol.upper(),
+            "article_count": len(articles),
+            "aggregate_sentiment": {
+                "score": round(aggregate_score, 3),
+                "confidence": round(aggregate_conf, 3),
+                "trend": trend,
+            },
+            "articles": analyzed,
+            "timestamp": datetime.now().isoformat(),
+        })
+
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "symbol": symbol.upper(),
+        }), 500
+
+
+@app.route("/api/news-summary")
+def api_news_summary():
+    """Get news summary for all watchlist symbols."""
+    try:
+        from flask import request
+        from src.data.news import AlpacaNewsClient
+        from src.strategies.sentiment import SentimentAnalyzer
+
+        # Get watchlist from query params or use default
+        watchlist_param = request.args.get('symbols', '')
+        if watchlist_param:
+            watchlist = [s.strip().upper() for s in watchlist_param.split(',')]
+        else:
+            watchlist = ["SPY", "QQQ", "AAPL", "MSFT", "NVDA", "TSLA", "AMD", "META", "GOOGL", "AMZN"]
+
+        news_client = AlpacaNewsClient()
+        analyzer = SentimentAnalyzer()
+
+        results = []
+        for symbol in watchlist:
+            try:
+                articles = news_client.get_news(symbol, limit=5)
+
+                if not articles:
+                    results.append({
+                        "symbol": symbol,
+                        "article_count": 0,
+                        "sentiment_score": 0,
+                        "trend": "neutral",
+                    })
+                    continue
+
+                # Quick sentiment analysis
+                total_score = 0
+                total_conf = 0
+                for article in articles:
+                    sentiment = analyzer.analyze_text(article.headline, symbol)
+                    total_score += sentiment.sentiment_score * sentiment.confidence
+                    total_conf += sentiment.confidence
+
+                if total_conf > 0:
+                    score = total_score / total_conf
+                    conf = total_conf / len(articles)
+                else:
+                    score = 0
+                    conf = 0
+
+                if score > 0.2 and conf > 0.3:
+                    trend = "bullish"
+                elif score < -0.2 and conf > 0.3:
+                    trend = "bearish"
+                else:
+                    trend = "neutral"
+
+                results.append({
+                    "symbol": symbol,
+                    "article_count": len(articles),
+                    "sentiment_score": round(score, 3),
+                    "confidence": round(conf, 3),
+                    "trend": trend,
+                    "latest_headline": articles[0].headline if articles else None,
+                })
+
+            except Exception as e:
+                results.append({
+                    "symbol": symbol,
+                    "error": str(e),
+                })
+
+        return jsonify({
+            "symbols": results,
+            "timestamp": datetime.now().isoformat(),
+        })
+
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+        }), 500
+
+
 if __name__ == "__main__":
     # Run on all interfaces so it's accessible externally
     app.run(host="0.0.0.0", port=5000, debug=False)

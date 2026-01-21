@@ -305,7 +305,7 @@ class IncomeStrategy(OptionsStrategy):
     ) -> Optional[StrategySignal]:
         """Generate income strategy signal."""
         # Higher IV = better for premium sellers
-        if volatility < 0.20:  # IV below 20%
+        if volatility < 0.15:  # IV below 15% (relaxed from 20%)
             logger.debug(f"IV too low for income strategy on {underlying}")
             return None
 
@@ -456,7 +456,7 @@ class VolatilityStrategy(OptionsStrategy):
     def __init__(
         self,
         client: OptionsClient,
-        iv_percentile_threshold: float = 0.50,  # IV rank threshold
+        iv_percentile_threshold: float = 0.40,  # IV rank threshold (relaxed from 0.50)
         expected_move_multiplier: float = 1.5,  # Expected move vs implied
     ):
         super().__init__(client)
