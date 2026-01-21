@@ -401,15 +401,31 @@ class IncomeStrategy(OptionsStrategy):
         short_call_strike = atm_strike * 1.05  # 5% OTM
         long_call_strike = short_call_strike + width
 
-        # Find the contracts
-        short_put = chain.get_contract(OptionType.PUT, short_put_strike, expiration)
-        long_put = chain.get_contract(OptionType.PUT, long_put_strike, expiration)
-        short_call = chain.get_contract(OptionType.CALL, short_call_strike, expiration)
-        long_call = chain.get_contract(OptionType.CALL, long_call_strike, expiration)
+        # Get available puts and calls for this expiration
+        puts = chain.get_puts(expiration)
+        calls = chain.get_calls(expiration)
 
-        # If exact strikes not available, find nearest
-        if not all([short_put, long_put, short_call, long_call]):
-            logger.debug("Could not find all iron condor legs")
+        if not puts or not calls:
+            logger.debug(f"Iron condor: no puts or calls for {underlying} exp {expiration}")
+            return None
+
+        # Find nearest strikes (not exact matches)
+        short_put = min(puts, key=lambda c: abs(c.strike - short_put_strike))
+        long_put = min(puts, key=lambda c: abs(c.strike - long_put_strike))
+        short_call = min(calls, key=lambda c: abs(c.strike - short_call_strike))
+        long_call = min(calls, key=lambda c: abs(c.strike - long_call_strike))
+
+        # Validate leg relationships (short put > long put, long call > short call)
+        if short_put.strike <= long_put.strike:
+            logger.debug(f"Iron condor: invalid put spread strikes {long_put.strike}/{short_put.strike}")
+            return None
+        if long_call.strike <= short_call.strike:
+            logger.debug(f"Iron condor: invalid call spread strikes {short_call.strike}/{long_call.strike}")
+            return None
+
+        # Check all legs are tradeable
+        if not all([short_put.is_tradeable, long_put.is_tradeable, short_call.is_tradeable, long_call.is_tradeable]):
+            logger.debug(f"Iron condor: one or more legs not tradeable for {underlying}")
             return None
 
         contracts = [short_put, long_put, short_call, long_call]
@@ -425,8 +441,13 @@ class IncomeStrategy(OptionsStrategy):
 
         premium = sp_mid + sc_mid - lp_mid - lc_mid
 
+        # Calculate actual width from selected strikes
+        put_width = short_put.strike - long_put.strike
+        call_width = long_call.strike - short_call.strike
+        max_width = max(put_width, call_width)
+
         max_profit = premium * 100
-        max_loss = (width * 100) - max_profit
+        max_loss = (max_width * 100) - max_profit
 
         if max_loss <= 0:
             return None

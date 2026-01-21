@@ -125,7 +125,7 @@ class OptionsScanner:
             else:
                 trend = "neutral"
 
-            logger.debug(f"Sentiment for {symbol}: score={score:.2f}, confidence={confidence:.2f}, trend={trend}")
+            logger.info(f"Sentiment for {symbol}: score={score:.2f}, confidence={confidence:.2f}, trend={trend}")
             return score, confidence, trend
 
         except Exception as e:
