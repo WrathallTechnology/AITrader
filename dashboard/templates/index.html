@@ -272,6 +272,83 @@
         .loading {
             animation: pulse 1.5s infinite;
         }
+
+        /* Debug Tools Styles */
+        .debug-btn {
+            background: linear-gradient(135deg, #4fc3f7 0%, #29b6f6 100%);
+            color: #000;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .debug-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(79, 195, 247, 0.3);
+        }
+
+        .debug-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .debug-btn-secondary {
+            background: #2a2a4a;
+            color: #888;
+        }
+
+        .debug-btn-secondary:hover {
+            background: #3a3a5a;
+            color: #fff;
+            box-shadow: none;
+        }
+
+        .debug-test-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 12px;
+            background: #1a1a2a;
+            border-radius: 6px;
+            margin-bottom: 6px;
+        }
+
+        .debug-test-icon {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .debug-test-pass {
+            background: rgba(0, 200, 83, 0.2);
+            color: #00c853;
+        }
+
+        .debug-test-fail {
+            background: rgba(255, 82, 82, 0.2);
+            color: #ff5252;
+        }
+
+        .debug-test-name {
+            color: #fff;
+            font-weight: 500;
+            min-width: 200px;
+        }
+
+        .debug-test-result {
+            color: #888;
+            font-size: 12px;
+        }
     </style>
 </head>
 <body>
@@ -487,11 +564,62 @@
             </table>
         </div>
 
-        <!-- Logs Section -->
+        <!-- Debug Tools Section -->
+        <h2 class="section-title" style="margin-top: 30px;">Debug Tools</h2>
+        <div class="card">
+            <div style="display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; align-items: center;">
+                <button onclick="runOptionsDebug()" class="debug-btn" id="debug-btn">Run Options Diagnostics</button>
+                <button onclick="clearDebugPanel()" class="debug-btn debug-btn-secondary">Clear</button>
+                <span id="debug-status" style="color: #888; font-size: 12px;"></span>
+            </div>
+
+            <!-- Debug Results Panel -->
+            <div id="debug-results" style="display: none;">
+                <div style="margin-bottom: 15px;">
+                    <h4 style="color: #fff; margin-bottom: 10px;">Test Results</h4>
+                    <div id="debug-tests"></div>
+                </div>
+                <div id="debug-details" style="display: none;">
+                    <h4 style="color: #fff; margin-bottom: 10px;">Details</h4>
+                    <div class="logs-container" style="max-height: 300px;">
+                        <pre id="debug-json" style="color: #4fc3f7; font-size: 11px; white-space: pre-wrap;"></pre>
+                    </div>
+                </div>
+                <div id="debug-errors" style="display: none;">
+                    <h4 style="color: #ff5252; margin-bottom: 10px;">Errors</h4>
+                    <div class="logs-container" style="max-height: 200px; border-color: #ff5252;">
+                        <pre id="debug-error-text" style="color: #ff5252; font-size: 11px; white-space: pre-wrap;"></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Logs Section with Filtering -->
         <h2 class="section-title" style="margin-top: 30px;">Recent Activity</h2>
         <div class="card">
+            <div style="display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; align-items: center;">
+                <input type="text" id="log-filter" placeholder="Search logs..."
+                    style="background: #1a1a2a; color: #fff; border: 1px solid #2a2a4a; padding: 6px 12px; border-radius: 4px; font-size: 12px; width: 200px;"
+                    onkeyup="if(event.key==='Enter') filterLogs()">
+                <select id="log-level" onchange="filterLogs()" style="background: #1a1a2a; color: #fff; border: 1px solid #2a2a4a; padding: 6px 12px; border-radius: 4px; font-size: 12px;">
+                    <option value="all">All Levels</option>
+                    <option value="INFO">INFO</option>
+                    <option value="WARNING">WARNING</option>
+                    <option value="ERROR">ERROR</option>
+                    <option value="DEBUG">DEBUG</option>
+                </select>
+                <button onclick="filterLogs()" class="debug-btn debug-btn-secondary" style="padding: 6px 12px;">Search</button>
+                <button onclick="resetLogFilter()" class="debug-btn debug-btn-secondary" style="padding: 6px 12px;">Reset</button>
+                <label style="margin-left: auto; display: flex; align-items: center; gap: 5px; color: #888; font-size: 12px;">
+                    <input type="checkbox" id="log-auto-scroll" checked style="accent-color: #4fc3f7;">
+                    Auto-scroll
+                </label>
+            </div>
             <div class="logs-container" id="logs-container">
                 <p style="color: #666;">Loading logs...</p>
+            </div>
+            <div style="margin-top: 10px; display: flex; gap: 10px;">
+                <span id="log-count" style="color: #666; font-size: 11px;">0 entries</span>
             </div>
         </div>
 
@@ -951,6 +1079,185 @@
                 updateLogs(),
             ]);
             document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
+        }
+
+        // Debug functions
+        async function runOptionsDebug() {
+            const btn = document.getElementById('debug-btn');
+            const status = document.getElementById('debug-status');
+            const results = document.getElementById('debug-results');
+            const tests = document.getElementById('debug-tests');
+            const details = document.getElementById('debug-details');
+            const errors = document.getElementById('debug-errors');
+
+            btn.disabled = true;
+            btn.textContent = 'Running...';
+            status.textContent = 'Running diagnostics...';
+            results.style.display = 'none';
+
+            try {
+                const response = await fetch('/api/options-debug');
+                const data = await response.json();
+
+                results.style.display = 'block';
+
+                // Render test results
+                if (data.tests && data.tests.length > 0) {
+                    tests.innerHTML = data.tests.map(t => `
+                        <div class="debug-test-item">
+                            <div class="debug-test-icon ${t.passed ? 'debug-test-pass' : 'debug-test-fail'}">
+                                ${t.passed ? '✓' : '✗'}
+                            </div>
+                            <span class="debug-test-name">${t.name}</span>
+                            <span class="debug-test-result">${t.result}</span>
+                        </div>
+                    `).join('');
+
+                    // Summary
+                    const summary = data.summary;
+                    const summaryColor = summary.all_passed ? '#00c853' : '#ff5252';
+                    status.innerHTML = `<span style="color: ${summaryColor}; font-weight: 600;">${summary.passed}/${summary.total} tests passed</span>`;
+                } else {
+                    tests.innerHTML = '<p style="color: #666;">No test results</p>';
+                }
+
+                // Show details (chain sample, contracts, etc.)
+                const detailData = {};
+                if (data.chain_sample) detailData.chain_sample = data.chain_sample;
+                if (data.suitable_contracts) detailData.suitable_contracts = data.suitable_contracts;
+                if (data.scanner_results) detailData.scanner_results = data.scanner_results;
+
+                if (Object.keys(detailData).length > 0) {
+                    details.style.display = 'block';
+                    document.getElementById('debug-json').textContent = JSON.stringify(detailData, null, 2);
+                } else {
+                    details.style.display = 'none';
+                }
+
+                // Show errors if any
+                if (data.errors && data.errors.length > 0) {
+                    errors.style.display = 'block';
+                    document.getElementById('debug-error-text').textContent = data.errors.join('\n\n');
+                } else {
+                    errors.style.display = 'none';
+                }
+
+            } catch (error) {
+                status.innerHTML = `<span style="color: #ff5252;">Error: ${error.message}</span>`;
+                tests.innerHTML = `<p style="color: #ff5252;">Failed to run diagnostics: ${error.message}</p>`;
+                results.style.display = 'block';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Run Options Diagnostics';
+            }
+        }
+
+        function clearDebugPanel() {
+            document.getElementById('debug-results').style.display = 'none';
+            document.getElementById('debug-status').textContent = '';
+        }
+
+        // Log filtering functions
+        let currentLogFilter = '';
+        let currentLogLevel = 'all';
+
+        async function filterLogs() {
+            currentLogFilter = document.getElementById('log-filter').value;
+            currentLogLevel = document.getElementById('log-level').value;
+            await updateLogsFiltered();
+        }
+
+        function resetLogFilter() {
+            document.getElementById('log-filter').value = '';
+            document.getElementById('log-level').value = 'all';
+            currentLogFilter = '';
+            currentLogLevel = 'all';
+            updateLogs();
+        }
+
+        async function updateLogsFiltered() {
+            try {
+                const filter = encodeURIComponent(currentLogFilter);
+                const level = currentLogLevel;
+                const url = `/api/logs/filter?lines=200&filter=${filter}&level=${level}`;
+
+                const response = await fetch(url);
+                const data = await response.json();
+
+                const container = document.getElementById('logs-container');
+                const countEl = document.getElementById('log-count');
+
+                if (data.logs.length === 0) {
+                    container.innerHTML = '<p style="color: #666;">No logs match your filter</p>';
+                    countEl.textContent = '0 entries';
+                    return;
+                }
+
+                container.innerHTML = data.logs.map(line => {
+                    let className = '';
+                    if (line.includes('INFO')) className = 'log-info';
+                    else if (line.includes('WARNING')) className = 'log-warning';
+                    else if (line.includes('ERROR')) className = 'log-error';
+                    else if (line.includes('DEBUG')) className = 'log-info';
+
+                    // Highlight search term
+                    let displayLine = line;
+                    if (currentLogFilter) {
+                        const regex = new RegExp(`(${currentLogFilter})`, 'gi');
+                        displayLine = line.replace(regex, '<mark style="background: #ffc107; color: #000; padding: 0 2px;">$1</mark>');
+                    }
+
+                    return `<div class="log-line ${className}">${displayLine}</div>`;
+                }).join('');
+
+                countEl.textContent = `${data.count} entries` + (data.filter ? ` matching "${data.filter}"` : '');
+
+                // Auto-scroll if enabled
+                if (document.getElementById('log-auto-scroll').checked) {
+                    container.scrollTop = container.scrollHeight;
+                }
+            } catch (error) {
+                console.error('Error filtering logs:', error);
+            }
+        }
+
+        // Override default updateLogs to respect filters
+        async function updateLogs() {
+            if (currentLogFilter || currentLogLevel !== 'all') {
+                await updateLogsFiltered();
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/logs');
+                const data = await response.json();
+
+                const container = document.getElementById('logs-container');
+                const countEl = document.getElementById('log-count');
+
+                if (data.logs.length === 0) {
+                    container.innerHTML = '<p style="color: #666;">No logs available</p>';
+                    countEl.textContent = '0 entries';
+                    return;
+                }
+
+                container.innerHTML = data.logs.map(line => {
+                    let className = '';
+                    if (line.includes('INFO')) className = 'log-info';
+                    else if (line.includes('WARNING')) className = 'log-warning';
+                    else if (line.includes('ERROR')) className = 'log-error';
+                    return `<div class="log-line ${className}">${line}</div>`;
+                }).join('');
+
+                countEl.textContent = `${data.logs.length} entries`;
+
+                // Auto-scroll if enabled
+                if (document.getElementById('log-auto-scroll').checked) {
+                    container.scrollTop = container.scrollHeight;
+                }
+            } catch (error) {
+                console.error('Error fetching logs:', error);
+            }
         }
 
         // Initial load

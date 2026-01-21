@@ -534,6 +534,227 @@ def api_options_chain(symbol: str):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/options-debug")
+def api_options_debug():
+    """Debug endpoint to diagnose options scanning issues."""
+    try:
+        import traceback
+        from datetime import date, timedelta
+
+        debug_info = {
+            "timestamp": datetime.now().isoformat(),
+            "tests": [],
+            "errors": [],
+        }
+
+        # Test 1: Check if market is open
+        client = get_client()
+        market_open = client.is_market_open()
+        debug_info["market_open"] = market_open
+        debug_info["tests"].append({
+            "name": "Market Status",
+            "passed": True,
+            "result": f"Market is {'OPEN' if market_open else 'CLOSED'}",
+        })
+
+        # Test 2: Initialize options client
+        try:
+            options_client = get_options_client()
+            debug_info["tests"].append({
+                "name": "Options Client Init",
+                "passed": True,
+                "result": "Options client initialized successfully",
+            })
+        except Exception as e:
+            debug_info["tests"].append({
+                "name": "Options Client Init",
+                "passed": False,
+                "result": f"Failed: {str(e)}",
+            })
+            debug_info["errors"].append(traceback.format_exc())
+            return jsonify(debug_info)
+
+        # Test 3: Get underlying price for a test symbol
+        test_symbol = "SPY"
+        try:
+            underlying_price = options_client._get_underlying_price(test_symbol)
+            debug_info["tests"].append({
+                "name": f"Get Underlying Price ({test_symbol})",
+                "passed": underlying_price > 0,
+                "result": f"${underlying_price:.2f}" if underlying_price > 0 else "Failed - returned 0",
+            })
+        except Exception as e:
+            debug_info["tests"].append({
+                "name": f"Get Underlying Price ({test_symbol})",
+                "passed": False,
+                "result": f"Error: {str(e)}",
+            })
+            debug_info["errors"].append(traceback.format_exc())
+
+        # Test 4: Get option chain for test symbol
+        try:
+            chain = options_client.get_option_chain(
+                underlying=test_symbol,
+                expiration_date_gte=date.today() + timedelta(days=7),
+                expiration_date_lte=date.today() + timedelta(days=45),
+            )
+            debug_info["tests"].append({
+                "name": f"Get Option Chain ({test_symbol})",
+                "passed": len(chain.contracts) > 0,
+                "result": f"Got {len(chain.contracts)} contracts, {len(chain.expirations)} expirations, underlying=${chain.underlying_price:.2f}",
+            })
+
+            # Additional chain details
+            debug_info["chain_sample"] = {
+                "underlying": test_symbol,
+                "underlying_price": chain.underlying_price,
+                "total_contracts": len(chain.contracts),
+                "expirations": [exp.isoformat() for exp in chain.expirations[:5]],
+                "sample_contracts": [
+                    {
+                        "symbol": c.symbol,
+                        "strike": c.strike,
+                        "type": c.option_type.value,
+                        "bid": c.bid,
+                        "ask": c.ask,
+                        "open_interest": c.open_interest,
+                        "volume": c.volume,
+                    }
+                    for c in chain.contracts[:5]
+                ]
+            }
+        except Exception as e:
+            debug_info["tests"].append({
+                "name": f"Get Option Chain ({test_symbol})",
+                "passed": False,
+                "result": f"Error: {str(e)}",
+            })
+            debug_info["errors"].append(traceback.format_exc())
+
+        # Test 5: Find contracts with relaxed criteria
+        try:
+            from src.options import OptionType
+            contracts = options_client.find_contracts(
+                underlying=test_symbol,
+                option_type=OptionType.CALL,
+                min_days=7,
+                max_days=45,
+                min_open_interest=10,
+                max_spread_pct=0.20,
+            )
+            debug_info["tests"].append({
+                "name": f"Find Contracts ({test_symbol} calls)",
+                "passed": len(contracts) > 0,
+                "result": f"Found {len(contracts)} suitable contracts",
+            })
+
+            if contracts:
+                debug_info["suitable_contracts"] = [
+                    {
+                        "symbol": c.symbol,
+                        "strike": c.strike,
+                        "expiration": c.expiration.isoformat(),
+                        "bid": c.bid,
+                        "ask": c.ask,
+                        "spread_pct": round(c.spread_pct * 100, 1) if c.spread_pct else None,
+                        "open_interest": c.open_interest,
+                    }
+                    for c in contracts[:5]
+                ]
+        except Exception as e:
+            debug_info["tests"].append({
+                "name": f"Find Contracts ({test_symbol} calls)",
+                "passed": False,
+                "result": f"Error: {str(e)}",
+            })
+            debug_info["errors"].append(traceback.format_exc())
+
+        # Test 6: Run scanner on single symbol
+        try:
+            scanner = OptionsScanner(client=options_client, watchlist=[test_symbol])
+            from src.options.scanner import ScanCriteria
+            criteria = ScanCriteria(min_open_interest=10, max_spread_pct=0.20)
+            opportunities = scanner.scan_symbol(test_symbol, criteria, market_trend="neutral")
+
+            debug_info["tests"].append({
+                "name": f"Scan Single Symbol ({test_symbol})",
+                "passed": True,
+                "result": f"Found {len(opportunities)} opportunities",
+            })
+
+            if opportunities:
+                debug_info["scanner_results"] = [
+                    {
+                        "type": o.opportunity_type,
+                        "score": o.score,
+                        "signal": o.signal.strategy_name if o.signal else None,
+                        "spread_type": o.signal.spread_type.value if o.signal else None,
+                    }
+                    for o in opportunities[:5]
+                ]
+        except Exception as e:
+            debug_info["tests"].append({
+                "name": f"Scan Single Symbol ({test_symbol})",
+                "passed": False,
+                "result": f"Error: {str(e)}",
+            })
+            debug_info["errors"].append(traceback.format_exc())
+
+        # Summary
+        passed = sum(1 for t in debug_info["tests"] if t["passed"])
+        total = len(debug_info["tests"])
+        debug_info["summary"] = {
+            "passed": passed,
+            "failed": total - passed,
+            "total": total,
+            "all_passed": passed == total,
+        }
+
+        return jsonify(debug_info)
+
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "timestamp": datetime.now().isoformat(),
+        }), 500
+
+
+@app.route("/api/logs/filter")
+def api_logs_filter():
+    """Get filtered log entries."""
+    try:
+        from flask import request
+
+        lines = int(request.args.get('lines', 100))
+        filter_text = request.args.get('filter', '').lower()
+        level = request.args.get('level', 'all').upper()
+
+        logs = read_recent_logs(lines * 2)  # Read extra to account for filtering
+
+        # Filter by level
+        if level != 'ALL':
+            logs = [l for l in logs if level in l]
+
+        # Filter by text search
+        if filter_text:
+            logs = [l for l in logs if filter_text in l.lower()]
+
+        # Limit results
+        logs = logs[-lines:]
+
+        return jsonify({
+            "logs": logs,
+            "count": len(logs),
+            "filter": filter_text,
+            "level": level,
+            "timestamp": datetime.now().isoformat(),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e), "logs": []}), 500
+
+
 if __name__ == "__main__":
     # Run on all interfaces so it's accessible externally
     app.run(host="0.0.0.0", port=5000, debug=False)
