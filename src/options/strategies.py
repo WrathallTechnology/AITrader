@@ -99,8 +99,8 @@ class DirectionalStrategy(OptionsStrategy):
         self,
         client: OptionsClient,
         delta_target: float = 0.30,
-        min_open_interest: int = 100,
-        max_spread_pct: float = 0.10,
+        min_open_interest: int = 10,  # Relaxed from 100 for better contract availability
+        max_spread_pct: float = 0.20,  # Relaxed from 0.10 for better contract availability
         prefer_spreads: bool = True,
     ):
         """
@@ -324,8 +324,8 @@ class IncomeStrategy(OptionsStrategy):
             min_days=21,
             max_days=self.max_days_to_expiration,
             delta_target=target_delta,
-            min_open_interest=50,
-            max_spread_pct=0.15,
+            min_open_interest=10,  # Relaxed from 50
+            max_spread_pct=0.20,  # Relaxed from 0.15
         )
 
         if not contracts:

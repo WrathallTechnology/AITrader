@@ -416,6 +416,8 @@ class AITrader:
             try:
                 # Determine market trend based on SPY
                 market_trend = self._detect_market_trend()
+                logger.info(f"Market trend detected: {market_trend}")
+                logger.info(f"Scanning options for watchlist: {self.stock_watchlist}")
 
                 opportunities = self.options_scanner.get_top_opportunities(
                     count=10,
