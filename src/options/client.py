@@ -115,7 +115,9 @@ class OptionsClient:
                 request_params["type"] = option_type.value
 
             request = GetOptionContractsRequest(**request_params)
+            logger.info(f"Requesting option chain for {underlying} with params: {request_params}")
             response = self.trading_client.get_option_contracts(request)
+            logger.info(f"API returned {len(response.option_contracts or [])} contracts for {underlying}")
 
             # Get underlying price
             underlying_price = self._get_underlying_price(underlying)
@@ -127,6 +129,10 @@ class OptionsClient:
             for contract_data in response.option_contracts or []:
                 contract = self._parse_contract(contract_data)
                 if contract:
+                    # Validate contract matches requested underlying
+                    if contract.underlying.upper() != underlying.upper():
+                        logger.warning(f"API returned contract for {contract.underlying}, expected {underlying} - skipping")
+                        continue
                     contracts.append(contract)
                     expirations.add(contract.expiration)
 

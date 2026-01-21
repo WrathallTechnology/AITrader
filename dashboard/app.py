@@ -768,13 +768,15 @@ def api_options_debug():
                     "detected_trend": detected_trend,
                     "why_no_opportunities": [
                         f"Detected trend: {detected_trend}",
-                        f"IV Rank = {iv_rank:.2f} (need >=0.7 for high IV or <=0.3 for low IV opportunities)",
-                        f"Avg IV = {avg_iv:.2%} (IncomeStrategy needs IV > 20%)",
+                        f"IV Rank = {iv_rank:.2f} (need >=0.5 for high IV or <=0.4 for low IV opportunities)",
+                        f"Avg IV = {avg_iv:.2%} (IncomeStrategy needs IV > 15%)",
                         "No unusual volume detected (need volume/OI ratio >= 2.0)",
+                        "Iron condors require all 4 legs to have valid bid/ask quotes",
                     ] + (["DirectionalStrategy skipped (trend is neutral)"] if detected_trend == "neutral" else []),
                     "suggestions": [
                         "Try running when market has clearer directional movement",
                         "Scanner works best with active trading and clear trends",
+                        "Check news sentiment - strong news can override neutral technical trend",
                     ],
                 }
 
