@@ -96,9 +96,9 @@ class OptionsClient:
             OptionChain with available contracts
         """
         try:
-            # Build request
+            # Build request - use underlying_symbols (plural) per Alpaca API
             request_params = {
-                "underlying_symbol": underlying,
+                "underlying_symbols": [underlying],
             }
 
             if expiration_date:
@@ -126,15 +126,19 @@ class OptionsClient:
             contracts = []
             expirations = set()
 
+            skipped_wrong_underlying = 0
             for contract_data in response.option_contracts or []:
                 contract = self._parse_contract(contract_data)
                 if contract:
                     # Validate contract matches requested underlying
                     if contract.underlying.upper() != underlying.upper():
-                        logger.warning(f"API returned contract for {contract.underlying}, expected {underlying} - skipping")
+                        skipped_wrong_underlying += 1
                         continue
                     contracts.append(contract)
                     expirations.add(contract.expiration)
+
+            if skipped_wrong_underlying > 0:
+                logger.warning(f"Skipped {skipped_wrong_underlying} contracts with wrong underlying (requested {underlying})")
 
             # Get quotes for contracts
             if contracts:
