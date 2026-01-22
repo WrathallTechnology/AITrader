@@ -190,19 +190,34 @@ class OptionsClient:
     def _update_quotes(self, contracts: list[OptionContract]) -> None:
         """Update quotes for a list of contracts."""
         try:
-            symbols = [c.symbol for c in contracts]
+            # Batch requests to avoid API limits (max 100 symbols per request)
+            batch_size = 100
+            all_quotes = {}
 
-            # Get latest quotes
-            request = OptionLatestQuoteRequest(symbol_or_symbols=symbols)
-            quotes = self.data_client.get_option_latest_quote(request)
+            for i in range(0, len(contracts), batch_size):
+                batch = contracts[i:i + batch_size]
+                symbols = [c.symbol for c in batch]
+
+                try:
+                    request = OptionLatestQuoteRequest(symbol_or_symbols=symbols)
+                    quotes = self.data_client.get_option_latest_quote(request)
+                    # Log first batch details for debugging
+                    if i == 0 and quotes:
+                        first_symbol = list(quotes.keys())[0] if quotes else None
+                        if first_symbol:
+                            q = quotes[first_symbol]
+                            logger.info(f"Sample quote for {first_symbol}: bid={q.bid_price}, ask={q.ask_price}, bid_size={q.bid_size}, ask_size={q.ask_size}")
+                    all_quotes.update(quotes)
+                except Exception as batch_error:
+                    logger.warning(f"Failed to get quotes for batch {i//batch_size + 1}: {batch_error}")
 
             # Update contracts with quote data
             quotes_found = 0
             valid_quotes = 0
             for contract in contracts:
-                if contract.symbol in quotes:
+                if contract.symbol in all_quotes:
                     quotes_found += 1
-                    quote = quotes[contract.symbol]
+                    quote = all_quotes[contract.symbol]
                     bid = float(quote.bid_price or 0)
                     ask = float(quote.ask_price or 0)
                     contract.bid = bid
@@ -211,10 +226,15 @@ class OptionsClient:
                     if bid > 0 and ask > 0 and bid < ask:
                         valid_quotes += 1
 
-            logger.debug(f"_update_quotes: {len(contracts)} contracts, {quotes_found} quotes found, {valid_quotes} valid (bid>0, ask>0, bid<ask)")
+            logger.info(f"_update_quotes: {len(contracts)} contracts, {quotes_found} quotes found, {valid_quotes} valid (bid>0, ask>0, bid<ask)")
+
+            if valid_quotes == 0 and quotes_found > 0:
+                logger.warning("Quotes received but all have bid=0 or ask=0 - market may be closed")
+            elif quotes_found == 0:
+                logger.warning("No quotes returned from API - check API subscription or connectivity")
 
         except Exception as e:
-            logger.debug(f"Failed to update quotes: {e}")
+            logger.error(f"Failed to update quotes: {e}")
 
     def _get_underlying_price(self, symbol: str) -> float:
         """Get current price of underlying."""
