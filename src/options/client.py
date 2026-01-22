@@ -99,6 +99,7 @@ class OptionsClient:
             # Build request - use underlying_symbols (plural) per Alpaca API
             request_params = {
                 "underlying_symbols": [underlying],
+                "limit": 1000,  # Increase from default to get more contracts
             }
 
             if expiration_date:
@@ -139,6 +140,8 @@ class OptionsClient:
 
             if skipped_wrong_underlying > 0:
                 logger.warning(f"Skipped {skipped_wrong_underlying} contracts with wrong underlying (requested {underlying})")
+
+            logger.info(f"After filtering: {len(contracts)} contracts for {underlying}, skipped {skipped_wrong_underlying} wrong underlying")
 
             # Get quotes for contracts
             if contracts:
