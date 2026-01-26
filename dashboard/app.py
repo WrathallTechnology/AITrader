@@ -21,10 +21,10 @@ from config import config
 from src.client import AlpacaClient
 from src.data.fetcher import DataFetcher
 from src.data.processor import DataProcessor
-from src.data.crypto_scanner import CryptoScanner
+# CryptoScanner removed - crypto trading disabled
 from src.strategies import TechnicalStrategy, MLStrategy, HybridStrategy
 from src.risk import DrawdownProtection, CircuitBreaker
-from src.options import OptionsClient, OptionsScanner, OptionsStrategyManager
+from src.options import OptionsClient, OptionsScanner, OptionsStrategyManager, YahooOptionsDataProvider
 
 app = Flask(__name__)
 
@@ -43,12 +43,25 @@ def get_client():
     return AlpacaClient(config.alpaca)
 
 
+# Yahoo Finance data provider (cached globally for efficiency)
+_yahoo_provider = None
+
+
+def get_yahoo_provider():
+    """Get Yahoo Finance options data provider (singleton)."""
+    global _yahoo_provider
+    if _yahoo_provider is None:
+        _yahoo_provider = YahooOptionsDataProvider(cache_ttl_minutes=5)
+    return _yahoo_provider
+
+
 def get_options_client():
-    """Get Options client for options trading."""
+    """Get Options client with Yahoo Finance data provider."""
     return OptionsClient(
         api_key=config.alpaca.api_key,
         secret_key=config.alpaca.secret_key,
         paper=config.alpaca.is_paper,
+        data_provider=get_yahoo_provider(),  # Use Yahoo for data, Alpaca for orders
     )
 
 
@@ -234,7 +247,7 @@ def api_status():
                 "percent": round(pnl_pct, 2),
             },
             "positions_count": len(positions),
-            "mode": "crypto",  # Could be dynamic
+            "mode": "all",  # stocks + options
             "paper_trading": config.alpaca.is_paper,
             "timestamp": datetime.now().isoformat(),
         })
@@ -264,22 +277,14 @@ def api_orders():
 
 @app.route("/api/signals")
 def api_signals():
-    """Get current signals for all watched symbols (stocks + crypto)."""
+    """Get current signals for all watched stock symbols."""
     try:
-        # All watchlist symbols
+        # Stock watchlist symbols
         stock_symbols = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "AMD", "SPY", "QQQ"]
-        crypto_symbols = ["BTC/USD", "ETH/USD"]
 
         signals = []
         client = get_client()
         market_open = client.is_market_open()
-
-        # Get crypto signals (always available)
-        for symbol in crypto_symbols:
-            analysis = analyze_symbol(symbol)
-            if analysis and "error" not in analysis:
-                analysis["asset_type"] = "crypto"
-                signals.append(analysis)
 
         # Get stock signals (only when market is open, or use cached data)
         if market_open:
@@ -312,45 +317,10 @@ def api_logs():
 def api_analysis(symbol: str):
     """Get detailed analysis for a symbol."""
     try:
-        # Handle URL encoding for crypto symbols
-        symbol = symbol.replace("-", "/")
         analysis = analyze_symbol(symbol)
         if analysis:
             return jsonify(analysis)
         return jsonify({"error": "Could not analyze symbol"}), 404
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/scanner")
-def api_scanner():
-    """Get crypto scanner opportunities."""
-    try:
-        client = get_client()
-        scanner = CryptoScanner(
-            client=client,
-            min_volume_usd=1_000,  # Very low - small account doesn't need high liquidity
-            max_pairs=15,
-        )
-        opportunities = scanner.get_top_opportunities(count=15, min_score=30)
-
-        return jsonify({
-            "opportunities": [
-                {
-                    "symbol": o.symbol,
-                    "price": round(o.price, 2) if o.price > 1 else round(o.price, 6),
-                    "change_24h": round(o.change_24h, 2),
-                    "volume_24h": round(o.volume_24h, 0),
-                    "volatility": round(o.volatility, 1),
-                    "rsi": round(o.rsi, 1),
-                    "trend_strength": round(o.trend_strength, 2),
-                    "score": round(o.score, 0),
-                    "reason": o.reason,
-                }
-                for o in opportunities
-            ],
-            "timestamp": datetime.now().isoformat(),
-        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -371,11 +341,8 @@ def api_transactions():
         return jsonify({"error": str(e)}), 500
 
 
-# Stock watchlist for options scanning
-OPTIONS_WATCHLIST = [
-    "AAPL", "MSFT", "GOOGL", "AMZN", "META",
-    "NVDA", "TSLA", "AMD", "SPY", "QQQ",
-]
+# Stock watchlist for options scanning (using Yahoo Finance data)
+OPTIONS_WATCHLIST = ["MU", "RKLB"]
 
 
 def detect_market_trend() -> str:

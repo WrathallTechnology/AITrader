@@ -128,7 +128,9 @@ class DirectionalStrategy(OptionsStrategy):
         trend: str,
     ) -> Optional[StrategySignal]:
         """Generate directional strategy signal."""
+        logger.info(f"DirectionalStrategy.analyze: {underlying} trend={trend}, vol={volatility:.2%}")
         if trend == "neutral":
+            logger.info(f"DirectionalStrategy.analyze: {underlying} - skipping, trend is neutral")
             return None
 
         # Determine option type based on trend
@@ -146,8 +148,10 @@ class DirectionalStrategy(OptionsStrategy):
         )
 
         if not contracts:
-            logger.debug(f"No suitable {option_type.value} contracts for {underlying}")
+            logger.info(f"DirectionalStrategy.analyze: {underlying} - no suitable {option_type.value} contracts found")
             return None
+
+        logger.info(f"DirectionalStrategy.analyze: {underlying} - found {len(contracts)} suitable {option_type.value} contracts")
 
         best_contract = contracts[0]
 
@@ -304,20 +308,24 @@ class IncomeStrategy(OptionsStrategy):
         trend: str,
     ) -> Optional[StrategySignal]:
         """Generate income strategy signal."""
+        logger.info(f"IncomeStrategy.analyze: {underlying} trend={trend}, vol={volatility:.2%}")
         # Higher IV = better for premium sellers
         if volatility < 0.15:  # IV below 15% (relaxed from 20%)
-            logger.debug(f"IV too low for income strategy on {underlying}")
+            logger.info(f"IncomeStrategy.analyze: {underlying} - IV {volatility:.2%} too low (need >15%)")
             return None
 
         if trend == "neutral":
             # Iron condor for neutral/range-bound
+            logger.info(f"IncomeStrategy.analyze: {underlying} - trend neutral, trying iron condor")
             return self._analyze_iron_condor(underlying, underlying_price, volatility)
         elif trend == "bullish":
             # Cash-secured put
+            logger.info(f"IncomeStrategy.analyze: {underlying} - trend bullish, trying cash-secured put")
             return self._analyze_cash_secured_put(underlying, underlying_price, volatility)
         else:
             # For bearish, covered calls if we have stock (assume we don't)
             # Fall back to iron condor with bearish skew
+            logger.info(f"IncomeStrategy.analyze: {underlying} - trend bearish, trying iron condor")
             return self._analyze_iron_condor(underlying, underlying_price, volatility)
 
     def _analyze_cash_secured_put(
@@ -341,7 +349,10 @@ class IncomeStrategy(OptionsStrategy):
         )
 
         if not contracts:
+            logger.info(f"_analyze_cash_secured_put: {underlying} - no suitable PUT contracts found")
             return None
+
+        logger.info(f"_analyze_cash_secured_put: {underlying} - found {len(contracts)} PUT contracts")
 
         best = contracts[0]
 
@@ -382,11 +393,15 @@ class IncomeStrategy(OptionsStrategy):
         chain = self.get_chain(underlying, min_days=21, max_days=45)
 
         if not chain.contracts or not chain.expirations:
+            logger.info(f"_analyze_iron_condor: {underlying} - no contracts or expirations")
             return None
 
         expiration = chain.nearest_expiration(min_days=21, max_days=45)
         if not expiration:
+            logger.info(f"_analyze_iron_condor: {underlying} - no expiration in 21-45 DTE range")
             return None
+
+        logger.info(f"_analyze_iron_condor: {underlying} - using expiration {expiration}")
 
         # Define strikes for iron condor
         # Sell OTM put and call, buy further OTM for protection

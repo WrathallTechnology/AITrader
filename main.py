@@ -7,9 +7,8 @@ It initializes all components and runs the trading loop.
 Usage:
     python main.py                    # Run with default settings
     python main.py --mode stocks      # Trade only stocks
-    python main.py --mode crypto      # Trade only crypto
     python main.py --mode options     # Trade only options
-    python main.py --mode all         # Trade everything (default)
+    python main.py --mode all         # Trade stocks + options (default)
     python main.py --dry-run          # Analyze but don't execute trades
 """
 
@@ -31,7 +30,7 @@ from config import config, AlpacaConfig
 from src.client import AlpacaClient
 from src.data.fetcher import DataFetcher
 from src.data.processor import DataProcessor
-from src.data.crypto_scanner import CryptoScanner
+# CryptoScanner removed - crypto trading disabled
 from src.strategies import AdvancedHybridStrategy, TechnicalStrategy, MLStrategy, SignalType
 from src.risk import (
     PositionSizer,
@@ -118,7 +117,7 @@ class AITrader:
         Initialize the trading bot.
 
         Args:
-            mode: Trading mode - "stocks", "crypto", "options", or "all"
+            mode: Trading mode - "stocks", "options", or "all"
             dry_run: If True, analyze but don't execute trades
         """
         self.mode = mode
@@ -153,7 +152,6 @@ class AITrader:
             "AAPL", "MSFT", "GOOGL", "AMZN", "META",
             "NVDA", "TSLA", "AMD", "SPY", "QQQ",
         ]
-        self.crypto_watchlist = ["BTC/USD", "ETH/USD"]
 
         if mode in ("options", "all"):
             self._init_options_components()
@@ -166,11 +164,6 @@ class AITrader:
         self.client = AlpacaClient(config.alpaca)
         self.data_fetcher = DataFetcher(self.client)
         self.data_processor = DataProcessor()
-        self.crypto_scanner = CryptoScanner(
-            client=self.client,
-            min_volume_usd=1_000,  # Very low - small account doesn't need high liquidity
-            max_pairs=10,
-        )
 
     def _init_strategy_components(self):
         """Initialize strategy components."""
@@ -321,10 +314,6 @@ class AITrader:
                     else:
                         logger.info("Stock market closed - skipping stock cycle")
 
-                # Crypto trades 24/7
-                if self.mode in ("crypto", "all"):
-                    self._run_crypto_cycle()
-
                 # Options during market hours
                 if self.mode in ("options", "all"):
                     if market_open:
@@ -377,42 +366,6 @@ class AITrader:
         for symbol in self.stock_watchlist:
             try:
                 self._analyze_and_trade(symbol, "stock")
-            except Exception as e:
-                logger.error(f"Error processing {symbol}: {e}")
-
-    def _run_crypto_cycle(self):
-        """Run one cycle of crypto trading."""
-        logger.info("Running crypto trading cycle...")
-
-        # Reset cycle order tracking
-        self._cycle_orders_value = 0.0
-        self._cycle_orders_count = 0
-
-        # Run scanner on first cycle (no _last_crypto_scan) or every 10 minutes
-        should_scan = not hasattr(self, "_last_crypto_scan") or \
-                      (datetime.now() - self._last_crypto_scan).total_seconds() > 600
-
-        if should_scan:
-            logger.info("Running crypto scanner to find opportunities...")
-            try:
-                opportunities = self.crypto_scanner.get_top_opportunities(
-                    count=8,
-                    min_score=30,  # Lower threshold to find more pairs
-                )
-                if opportunities:
-                    self.crypto_watchlist = [o.symbol for o in opportunities]
-                    logger.info(f"Scanner found {len(opportunities)} opportunities:")
-                    for opp in opportunities[:5]:
-                        logger.info(f"  {opp.symbol}: score={opp.score:.0f}, RSI={opp.rsi:.0f}, {opp.reason}")
-                else:
-                    logger.warning("Scanner found no opportunities, using default watchlist")
-                self._last_crypto_scan = datetime.now()
-            except Exception as e:
-                logger.warning(f"Crypto scan failed, using default watchlist: {e}")
-
-        for symbol in self.crypto_watchlist:
-            try:
-                self._analyze_and_trade(symbol, "crypto")
             except Exception as e:
                 logger.error(f"Error processing {symbol}: {e}")
 
@@ -922,7 +875,7 @@ def main():
     parser = argparse.ArgumentParser(description="AITrader - AI-Powered Trading Bot")
     parser.add_argument(
         "--mode",
-        choices=["stocks", "crypto", "options", "all"],
+        choices=["stocks", "options", "all"],
         default="all",
         help="Trading mode (default: all)",
     )

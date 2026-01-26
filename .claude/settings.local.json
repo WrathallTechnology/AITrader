@@ -3,7 +3,12 @@
     "allow": [
       "Bash(python -m examples.backtest_example:*)",
       "Bash(python examples/backtest_example.py:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(pip install:*)",
+      "Bash(python.exe:*)",
+      "Bash(py -3:*)",
+      "WebFetch(domain:finance.yahoo.com)",
+      "Read(//d/**)"
     ]
   }
 }

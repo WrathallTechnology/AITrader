@@ -221,10 +221,11 @@ class OptionsScanner:
                     sentiment_boost = -5  # Penalty for conflicting signals
                     logger.debug(f"scan_symbol: {symbol} - sentiment conflicts with technical (sentiment={sentiment_trend}, technical={market_trend})")
 
-        logger.debug(f"scan_symbol: {symbol} - avg_iv={avg_iv:.2%}, iv_rank={iv_rank:.2f}, trend={effective_trend}, sentiment={sentiment_score:.2f}")
+        logger.info(f"scan_symbol: {symbol} - avg_iv={avg_iv:.2%}, iv_rank={iv_rank:.2f}, trend={effective_trend}, sentiment={sentiment_score:.2f}")
 
         # High IV opportunity (premium selling) - relaxed from 0.7 to 0.5
         if iv_rank >= 0.5 and criteria.min_iv_rank <= iv_rank <= criteria.max_iv_rank:
+            logger.info(f"scan_symbol: {symbol} - IV rank {iv_rank:.2f} qualifies for high IV opportunity")
             opp = self._create_high_iv_opportunity(
                 symbol, chain, avg_iv, iv_rank, effective_trend
             )
@@ -233,9 +234,13 @@ class OptionsScanner:
                 opp.details["sentiment_score"] = sentiment_score
                 opp.details["sentiment_confidence"] = sentiment_conf
                 opportunities.append(opp)
+                logger.info(f"scan_symbol: {symbol} - Added high IV opportunity, score={opp.score:.0f}")
+            else:
+                logger.warning(f"scan_symbol: {symbol} - _create_high_iv_opportunity returned None")
 
         # Low IV opportunity (volatility buying) - relaxed from 0.3 to 0.4
         if iv_rank <= 0.4:
+            logger.info(f"scan_symbol: {symbol} - IV rank {iv_rank:.2f} qualifies for low IV opportunity")
             opp = self._create_low_iv_opportunity(
                 symbol, chain, avg_iv, iv_rank, effective_trend
             )
@@ -244,6 +249,7 @@ class OptionsScanner:
                 opp.details["sentiment_score"] = sentiment_score
                 opp.details["sentiment_confidence"] = sentiment_conf
                 opportunities.append(opp)
+                logger.info(f"scan_symbol: {symbol} - Added low IV opportunity, score={opp.score:.0f}")
 
         # Unusual volume
         unusual_contracts = self._find_unusual_volume(chain, criteria.unusual_volume_threshold)
@@ -271,6 +277,8 @@ class OptionsScanner:
             volatility=avg_iv,
             trend=effective_trend,  # Use sentiment-adjusted trend
         )
+
+        logger.info(f"scan_symbol: {symbol} - strategy_manager.analyze_all returned {len(signals)} signals")
 
         for signal in signals:
             # Apply sentiment boost to strategy scores
@@ -381,6 +389,8 @@ class OptionsScanner:
             volatility=avg_iv,
             trend=market_trend,
         )
+
+        logger.info(f"_create_high_iv_opportunity: {symbol} - get_best_signal returned {'signal: ' + signal.strategy_name if signal else 'None'}")
 
         # Prefer income strategies in high IV
         score = iv_rank * 100

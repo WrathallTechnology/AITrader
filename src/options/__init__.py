@@ -10,8 +10,9 @@ from .models import (
     OptionSpread,
     SpreadType,
 )
-from .client import OptionsClient
+from .client import OptionsClient, OptionsDataProvider
 from .models import OrderAction
+from .yahoo_provider import YahooOptionsDataProvider
 from .strategies import (
     OptionsStrategy,
     DirectionalStrategy,
@@ -43,6 +44,9 @@ __all__ = [
     "OrderAction",
     # Client
     "OptionsClient",
+    "OptionsDataProvider",
+    # Data Providers
+    "YahooOptionsDataProvider",
     # Strategies
     "OptionsStrategy",
     "DirectionalStrategy",

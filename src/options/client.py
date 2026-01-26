@@ -1,10 +1,13 @@
 """
-Options client for Alpaca API.
+Options client for Alpaca API with pluggable data providers.
+
+Supports using external data sources (like Yahoo Finance) for options data
+while still using Alpaca for order execution.
 """
 
 import logging
 from datetime import date, datetime, timedelta
-from typing import Optional
+from typing import Optional, Protocol, TYPE_CHECKING
 
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import (
@@ -34,9 +37,33 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 
+class OptionsDataProvider(Protocol):
+    """Protocol for options data providers (Yahoo Finance, etc.)."""
+
+    def get_option_chain(
+        self,
+        underlying: str,
+        expiration_date: Optional[date] = None,
+        expiration_date_gte: Optional[date] = None,
+        expiration_date_lte: Optional[date] = None,
+        strike_price_gte: Optional[float] = None,
+        strike_price_lte: Optional[float] = None,
+        option_type: Optional[OptionType] = None,
+    ) -> OptionChain:
+        """Get option chain for an underlying symbol."""
+        ...
+
+    def get_underlying_price(self, symbol: str) -> float:
+        """Get current price of underlying."""
+        ...
+
+
 class OptionsClient:
     """
-    Client for trading options via Alpaca.
+    Client for trading options via Alpaca with pluggable data providers.
+
+    Supports external data sources (like Yahoo Finance) for options data
+    while using Alpaca for order execution.
 
     Note: Alpaca options trading requires specific account approval.
     """
@@ -46,6 +73,7 @@ class OptionsClient:
         api_key: str,
         secret_key: str,
         paper: bool = True,
+        data_provider: Optional[OptionsDataProvider] = None,
     ):
         """
         Initialize options client.
@@ -54,21 +82,38 @@ class OptionsClient:
             api_key: Alpaca API key
             secret_key: Alpaca secret key
             paper: Use paper trading (default True)
+            data_provider: Optional external data provider (e.g., YahooOptionsDataProvider)
+                          If None, uses Alpaca for data
         """
         self.paper = paper
+        self._data_provider = data_provider
+        self._api_key = api_key
+        self._secret_key = secret_key
 
-        # Trading client for orders
+        # Trading client for orders (always Alpaca)
         self.trading_client = TradingClient(
             api_key=api_key,
             secret_key=secret_key,
             paper=paper,
         )
 
-        # Data client for quotes and chains
-        self.data_client = OptionHistoricalDataClient(
-            api_key=api_key,
-            secret_key=secret_key,
-        )
+        # Data client for quotes and chains (only needed if no external provider)
+        self._data_client = None
+        if data_provider is None:
+            self._data_client = OptionHistoricalDataClient(
+                api_key=api_key,
+                secret_key=secret_key,
+            )
+
+    @property
+    def data_client(self):
+        """Lazy-load Alpaca data client if needed."""
+        if self._data_client is None:
+            self._data_client = OptionHistoricalDataClient(
+                api_key=self._api_key,
+                secret_key=self._secret_key,
+            )
+        return self._data_client
 
     def get_option_chain(
         self,
@@ -95,6 +140,20 @@ class OptionsClient:
         Returns:
             OptionChain with available contracts
         """
+        # Use external data provider if configured
+        if self._data_provider is not None:
+            logger.info(f"Using external data provider for {underlying} option chain")
+            return self._data_provider.get_option_chain(
+                underlying=underlying,
+                expiration_date=expiration_date,
+                expiration_date_gte=expiration_date_gte,
+                expiration_date_lte=expiration_date_lte,
+                strike_price_gte=strike_price_gte,
+                strike_price_lte=strike_price_lte,
+                option_type=option_type,
+            )
+
+        # Fall back to Alpaca API
         try:
             # Build request - use underlying_symbols (plural) per Alpaca API
             request_params = {
@@ -238,6 +297,11 @@ class OptionsClient:
 
     def _get_underlying_price(self, symbol: str) -> float:
         """Get current price of underlying."""
+        # Use external data provider if configured
+        if self._data_provider is not None:
+            return self._data_provider.get_underlying_price(symbol)
+
+        # Fall back to Alpaca API
         try:
             # Use trading client to get latest trade with IEX feed (free tier)
             from alpaca.data.historical import StockHistoricalDataClient
@@ -441,7 +505,7 @@ class OptionsClient:
             option_type=option_type,
         )
 
-        logger.debug(f"find_contracts: {underlying} {option_type.value} - got {len(chain.contracts)} contracts")
+        logger.info(f"find_contracts: {underlying} {option_type.value} - got {len(chain.contracts)} contracts")
 
         # Filter contracts
         suitable = []
@@ -470,7 +534,7 @@ class OptionsClient:
 
             suitable.append(contract)
 
-        logger.debug(f"find_contracts: {underlying} - filtered not_tradeable:{filtered_not_tradeable}, OI:{filtered_oi}, spread:{filtered_spread}, remaining:{len(suitable)}")
+        logger.info(f"find_contracts: {underlying} {option_type.value} - filtered not_tradeable:{filtered_not_tradeable}, OI:{filtered_oi}, spread:{filtered_spread}, remaining:{len(suitable)}")
 
         # Sort by delta closeness if target specified
         if delta_target and suitable:
