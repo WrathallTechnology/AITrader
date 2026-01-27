@@ -44,7 +44,7 @@ from src.options import (
     OptionsStrategyManager,
     OptionsRiskManager,
     OptionsScanner,
-    create_risk_limits_conservative,
+    create_risk_limits_aggressive,
 )
 import json
 from pathlib import Path
@@ -243,7 +243,7 @@ class AITrader:
         )
         self.options_strategy = OptionsStrategyManager(self.options_client)
         self.options_risk = OptionsRiskManager(
-            limits=create_risk_limits_conservative()
+            limits=create_risk_limits_aggressive()
         )
         self.options_scanner = OptionsScanner(
             client=self.options_client,

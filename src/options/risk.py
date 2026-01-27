@@ -541,8 +541,8 @@ def create_risk_limits_aggressive() -> OptionsRiskLimits:
         allow_naked_calls=True,  # Requires high margin
         allow_naked_puts=True,
         max_undefined_risk_positions=5,
-        min_days_to_expiration=3,
-        max_days_to_expiration=90,
-        max_single_underlying_pct=0.40,
-        max_single_expiration_pct=0.50,
+        min_days_to_expiration=0,
+        max_days_to_expiration=2,
+        max_single_underlying_pct=1,
+        max_single_expiration_pct=1,
     )

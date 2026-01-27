@@ -345,8 +345,10 @@ def api_transactions():
         return jsonify({"error": str(e)}), 500
 
 
-# Stock watchlist for options scanning (using Yahoo Finance data)
-OPTIONS_WATCHLIST = ["MU", "RKLB"]
+# Stock watchlist for options scanning
+# Note: Must use symbols that Alpaca supports for options trading
+# MU and RKLB are NOT supported by Alpaca for options
+OPTIONS_WATCHLIST = ["TSLA", "NVDA", "SPY", "AAPL", "AMD"]
 
 
 def detect_market_trend() -> str:
