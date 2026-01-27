@@ -569,6 +569,7 @@ def api_options_debug():
             "timestamp": datetime.now().isoformat(),
             "tests": [],
             "errors": [],
+            "watchlist": OPTIONS_WATCHLIST,
         }
 
         # Test 1: Check if market is open
@@ -581,14 +582,17 @@ def api_options_debug():
             "result": f"Market is {'OPEN' if market_open else 'CLOSED'}",
         })
 
-        # Test 2: Initialize options client
+        # Test 2: Initialize options client with Yahoo provider
         try:
             options_client = get_options_client()
+            yahoo_provider = get_yahoo_provider()
+            has_yahoo = options_client._data_provider is not None
             debug_info["tests"].append({
                 "name": "Options Client Init",
                 "passed": True,
-                "result": "Options client initialized successfully",
+                "result": f"Options client initialized (Yahoo provider: {'YES' if has_yahoo else 'NO'})",
             })
+            debug_info["data_source"] = "Yahoo Finance" if has_yahoo else "Alpaca API"
         except Exception as e:
             debug_info["tests"].append({
                 "name": "Options Client Init",
@@ -598,173 +602,138 @@ def api_options_debug():
             debug_info["errors"].append(traceback.format_exc())
             return jsonify(debug_info)
 
-        # Test 3: Get underlying price for a test symbol
-        test_symbol = "SPY"
-        try:
-            underlying_price = options_client._get_underlying_price(test_symbol)
-            debug_info["tests"].append({
-                "name": f"Get Underlying Price ({test_symbol})",
-                "passed": underlying_price > 0,
-                "result": f"${underlying_price:.2f}" if underlying_price > 0 else "Failed - returned 0",
-            })
-        except Exception as e:
-            debug_info["tests"].append({
-                "name": f"Get Underlying Price ({test_symbol})",
-                "passed": False,
-                "result": f"Error: {str(e)}",
-            })
-            debug_info["errors"].append(traceback.format_exc())
+        # Test each symbol in the watchlist
+        debug_info["symbol_tests"] = {}
 
-        # Test 4: Get option chain for test symbol
-        try:
-            chain = options_client.get_option_chain(
-                underlying=test_symbol,
-                expiration_date_gte=date.today() + timedelta(days=7),
-                expiration_date_lte=date.today() + timedelta(days=45),
-            )
-            debug_info["tests"].append({
-                "name": f"Get Option Chain ({test_symbol})",
-                "passed": len(chain.contracts) > 0,
-                "result": f"Got {len(chain.contracts)} contracts, {len(chain.expirations)} expirations, underlying=${chain.underlying_price:.2f}",
-            })
+        for test_symbol in OPTIONS_WATCHLIST:
+            symbol_info = {"symbol": test_symbol, "tests": []}
 
-            # Additional chain details
-            debug_info["chain_sample"] = {
-                "underlying": test_symbol,
-                "underlying_price": chain.underlying_price,
-                "total_contracts": len(chain.contracts),
-                "expirations": [exp.isoformat() for exp in chain.expirations[:5]],
-                "sample_contracts": [
-                    {
-                        "symbol": c.symbol,
-                        "strike": c.strike,
-                        "type": c.option_type.value,
-                        "bid": c.bid,
-                        "ask": c.ask,
-                        "open_interest": c.open_interest,
-                        "volume": c.volume,
+            # Test underlying price
+            try:
+                underlying_price = options_client._get_underlying_price(test_symbol)
+                symbol_info["underlying_price"] = underlying_price
+                symbol_info["tests"].append({
+                    "name": "Underlying Price",
+                    "passed": underlying_price > 0,
+                    "result": f"${underlying_price:.2f}" if underlying_price > 0 else "Failed - returned 0",
+                })
+            except Exception as e:
+                symbol_info["tests"].append({
+                    "name": "Underlying Price",
+                    "passed": False,
+                    "result": f"Error: {str(e)}",
+                })
+                debug_info["errors"].append(f"{test_symbol} price: {traceback.format_exc()}")
+
+            # Test option chain
+            try:
+                chain = options_client.get_option_chain(
+                    underlying=test_symbol,
+                    expiration_date_gte=date.today() + timedelta(days=7),
+                    expiration_date_lte=date.today() + timedelta(days=45),
+                )
+                symbol_info["chain"] = {
+                    "contracts": len(chain.contracts),
+                    "expirations": len(chain.expirations),
+                    "underlying_price": chain.underlying_price,
+                }
+                symbol_info["tests"].append({
+                    "name": "Option Chain",
+                    "passed": len(chain.contracts) > 0,
+                    "result": f"{len(chain.contracts)} contracts, {len(chain.expirations)} expirations",
+                })
+
+                # Add sample contracts if found
+                if chain.contracts:
+                    calls = [c for c in chain.contracts if c.option_type.value == 'call'][:3]
+                    puts = [c for c in chain.contracts if c.option_type.value == 'put'][:3]
+                    symbol_info["sample_contracts"] = {
+                        "calls": [
+                            {"symbol": c.symbol, "strike": c.strike, "bid": c.bid, "ask": c.ask, "oi": c.open_interest}
+                            for c in calls
+                        ],
+                        "puts": [
+                            {"symbol": c.symbol, "strike": c.strike, "bid": c.bid, "ask": c.ask, "oi": c.open_interest}
+                            for c in puts
+                        ],
                     }
-                    for c in chain.contracts[:5]
-                ]
-            }
-        except Exception as e:
-            debug_info["tests"].append({
-                "name": f"Get Option Chain ({test_symbol})",
-                "passed": False,
-                "result": f"Error: {str(e)}",
-            })
-            debug_info["errors"].append(traceback.format_exc())
+            except Exception as e:
+                symbol_info["tests"].append({
+                    "name": "Option Chain",
+                    "passed": False,
+                    "result": f"Error: {str(e)}",
+                })
+                debug_info["errors"].append(f"{test_symbol} chain: {traceback.format_exc()}")
 
-        # Test 5: Find contracts with relaxed criteria
+            # Test find contracts
+            try:
+                from src.options import OptionType
+                contracts = options_client.find_contracts(
+                    underlying=test_symbol,
+                    option_type=OptionType.CALL,
+                    min_days=7,
+                    max_days=45,
+                    min_open_interest=5,  # Lower threshold for testing
+                    max_spread_pct=0.30,  # More relaxed for testing
+                )
+                symbol_info["tests"].append({
+                    "name": "Find Suitable Contracts",
+                    "passed": len(contracts) > 0,
+                    "result": f"Found {len(contracts)} tradeable contracts",
+                })
+            except Exception as e:
+                symbol_info["tests"].append({
+                    "name": "Find Suitable Contracts",
+                    "passed": False,
+                    "result": f"Error: {str(e)}",
+                })
+
+            debug_info["symbol_tests"][test_symbol] = symbol_info
+
+        # Add overall tests summary to tests list
+        for symbol, info in debug_info["symbol_tests"].items():
+            for test in info["tests"]:
+                debug_info["tests"].append({
+                    "name": f"{symbol}: {test['name']}",
+                    "passed": test["passed"],
+                    "result": test["result"],
+                })
+
+        # Test scanner
         try:
-            from src.options import OptionType
-            contracts = options_client.find_contracts(
-                underlying=test_symbol,
-                option_type=OptionType.CALL,
-                min_days=7,
-                max_days=45,
-                min_open_interest=10,
-                max_spread_pct=0.20,
-            )
-            debug_info["tests"].append({
-                "name": f"Find Contracts ({test_symbol} calls)",
-                "passed": len(contracts) > 0,
-                "result": f"Found {len(contracts)} suitable contracts",
-            })
-
-            if contracts:
-                debug_info["suitable_contracts"] = [
-                    {
-                        "symbol": c.symbol,
-                        "strike": c.strike,
-                        "expiration": c.expiration.isoformat(),
-                        "bid": c.bid,
-                        "ask": c.ask,
-                        "spread_pct": round(c.spread_pct * 100, 1) if c.spread_pct else None,
-                        "open_interest": c.open_interest,
-                    }
-                    for c in contracts[:5]
-                ]
-        except Exception as e:
-            debug_info["tests"].append({
-                "name": f"Find Contracts ({test_symbol} calls)",
-                "passed": False,
-                "result": f"Error: {str(e)}",
-            })
-            debug_info["errors"].append(traceback.format_exc())
-
-        # Test 6: Run scanner on single symbol with different trends
-        try:
-            scanner = OptionsScanner(client=options_client, watchlist=[test_symbol])
+            scanner = OptionsScanner(client=options_client, watchlist=OPTIONS_WATCHLIST)
             from src.options.scanner import ScanCriteria
 
-            # Calculate IV metrics for diagnostics
-            avg_iv = scanner._calculate_avg_iv(chain)
-            iv_rank = scanner._calculate_iv_rank(test_symbol, avg_iv)
-
-            debug_info["iv_analysis"] = {
-                "avg_iv": round(avg_iv * 100, 2),
-                "iv_rank": round(iv_rank, 2),
-                "iv_interpretation": (
-                    "High IV (>70% rank) - good for selling premium"
-                    if iv_rank >= 0.7 else
-                    "Low IV (<30% rank) - good for buying volatility"
-                    if iv_rank <= 0.3 else
-                    "Normal IV - strategies limited"
-                ),
-            }
-
-            # Detect trend from historical data
             detected_trend = detect_market_trend()
             debug_info["detected_trend"] = detected_trend
 
-            criteria = ScanCriteria(min_open_interest=10, max_spread_pct=0.20)
-
-            # Scan with detected trend
-            opportunities = scanner.scan_symbol(test_symbol, criteria, market_trend=detected_trend)
+            criteria = ScanCriteria(min_open_interest=5, max_spread_pct=0.30)
+            opportunities = scanner.get_top_opportunities(count=10, market_trend=detected_trend)
 
             debug_info["tests"].append({
-                "name": f"Scan Single Symbol ({test_symbol})",
+                "name": "Scanner Full Run",
                 "passed": True,
                 "result": f"Found {len(opportunities)} opportunities (trend: {detected_trend})",
             })
 
-            # Explain why no opportunities if none found
-            if not opportunities:
-                debug_info["scan_diagnostics"] = {
-                    "detected_trend": detected_trend,
-                    "why_no_opportunities": [
-                        f"Detected trend: {detected_trend}",
-                        f"IV Rank = {iv_rank:.2f} (need >=0.5 for high IV or <=0.4 for low IV opportunities)",
-                        f"Avg IV = {avg_iv:.2%} (IncomeStrategy needs IV > 15%)",
-                        "No unusual volume detected (need volume/OI ratio >= 2.0)",
-                        "Iron condors require all 4 legs to have valid bid/ask quotes",
-                    ] + (["DirectionalStrategy skipped (trend is neutral)"] if detected_trend == "neutral" else []),
-                    "suggestions": [
-                        "Try running when market has clearer directional movement",
-                        "Scanner works best with active trading and clear trends",
-                        "Check news sentiment - strong news can override neutral technical trend",
-                    ],
-                }
-
             if opportunities:
                 debug_info["scanner_results"] = [
                     {
+                        "symbol": o.symbol,
                         "type": o.opportunity_type,
                         "score": o.score,
                         "signal": o.signal.strategy_name if o.signal else None,
                         "spread_type": o.signal.spread_type.value if o.signal else None,
-                        "rationale": o.signal.rationale if o.signal else str(o.details),
                     }
                     for o in opportunities[:5]
                 ]
         except Exception as e:
             debug_info["tests"].append({
-                "name": f"Scan Single Symbol ({test_symbol})",
+                "name": "Scanner Full Run",
                 "passed": False,
                 "result": f"Error: {str(e)}",
             })
-            debug_info["errors"].append(traceback.format_exc())
+            debug_info["errors"].append(f"Scanner: {traceback.format_exc()}")
 
         # Summary
         passed = sum(1 for t in debug_info["tests"] if t["passed"])

@@ -186,7 +186,7 @@ class YahooOptionsDataProvider:
             soup = BeautifulSoup(html, "lxml")
 
             # Find price in the page - look for the main price display
-            price = self._extract_price_from_html(soup)
+            price = self._extract_price_from_html(soup, symbol)
             if price > 0:
                 self._price_cache[symbol] = (price, datetime.now())
                 logger.info(f"Got underlying price for {symbol}: ${price:.2f}")
@@ -378,12 +378,25 @@ class YahooOptionsDataProvider:
 
     def _parse_options_table_v2(self, html: str, symbol: str) -> list[OptionContract]:
         """Parse options table, extracting expiration from contract names."""
-        soup = BeautifulSoup(html, "lxml")
         contracts = []
+
+        # Try JSON parsing first (more reliable)
+        json_contracts = self._parse_from_json(html, symbol)
+        if json_contracts:
+            logger.info(f"Parsed {len(json_contracts)} contracts from JSON for {symbol}")
+            return json_contracts
+
+        # Fall back to HTML table parsing
+        soup = BeautifulSoup(html, "lxml")
 
         # Find all tables - typically calls first, then puts
         tables = soup.find_all("table")
         logger.debug(f"Found {len(tables)} tables for {symbol}")
+
+        if not tables:
+            # Try finding section with options data
+            logger.warning(f"No tables found for {symbol}, HTML structure may have changed")
+            return contracts
 
         for i, table in enumerate(tables[:2]):  # Only process first 2 tables
             # Determine if calls or puts based on position
@@ -397,6 +410,8 @@ class YahooOptionsDataProvider:
             else:
                 rows = tbody.find_all("tr")
 
+            logger.debug(f"Table {i} ({option_type.value}s): found {len(rows)} rows")
+
             for row in rows:
                 try:
                     contract = self._parse_table_row_v2(row, symbol, option_type)
@@ -406,6 +421,99 @@ class YahooOptionsDataProvider:
                     logger.debug(f"Failed to parse row: {e}")
 
         return contracts
+
+    def _parse_from_json(self, html: str, symbol: str) -> list[OptionContract]:
+        """Try to parse options data from embedded JSON in the page."""
+        import json
+
+        contracts = []
+
+        # Yahoo embeds JSON data in script tags
+        # Look for patterns like "calls":[ or "puts":[
+        try:
+            # Find JSON data in page
+            patterns = [
+                r'"calls"\s*:\s*(\[.*?\])\s*,\s*"puts"',
+                r'"puts"\s*:\s*(\[.*?\])\s*[,}]',
+                r'root\.App\.main\s*=\s*({.*?});',
+            ]
+
+            calls_data = []
+            puts_data = []
+
+            # Try to find calls data
+            calls_match = re.search(r'"calls"\s*:\s*(\[\{.*?\}\])', html, re.DOTALL)
+            if calls_match:
+                try:
+                    calls_data = json.loads(calls_match.group(1))
+                except json.JSONDecodeError:
+                    pass
+
+            # Try to find puts data
+            puts_match = re.search(r'"puts"\s*:\s*(\[\{.*?\}\])', html, re.DOTALL)
+            if puts_match:
+                try:
+                    puts_data = json.loads(puts_match.group(1))
+                except json.JSONDecodeError:
+                    pass
+
+            # Parse contracts from JSON data
+            for call in calls_data:
+                contract = self._parse_json_contract(call, symbol, OptionType.CALL)
+                if contract:
+                    contracts.append(contract)
+
+            for put in puts_data:
+                contract = self._parse_json_contract(put, symbol, OptionType.PUT)
+                if contract:
+                    contracts.append(contract)
+
+        except Exception as e:
+            logger.debug(f"JSON parsing failed for {symbol}: {e}")
+
+        return contracts
+
+    def _parse_json_contract(
+        self,
+        data: dict,
+        symbol: str,
+        option_type: OptionType,
+    ) -> Optional[OptionContract]:
+        """Parse a contract from Yahoo JSON data."""
+        try:
+            contract_symbol = data.get("contractSymbol", "")
+            if not contract_symbol:
+                return None
+
+            # Extract expiration from contract symbol
+            match = re.search(rf'{symbol}(\d{{6}})([CP])(\d{{8}})', contract_symbol.upper())
+            if not match:
+                return None
+
+            date_str = match.group(1)
+            expiration = datetime.strptime(date_str, "%y%m%d").date()
+
+            strike = float(data.get("strike", 0))
+            if strike <= 0:
+                return None
+
+            return OptionContract(
+                symbol=contract_symbol.upper(),
+                underlying=symbol,
+                option_type=option_type,
+                strike=strike,
+                expiration=expiration,
+                bid=float(data.get("bid", 0) or 0),
+                ask=float(data.get("ask", 0) or 0),
+                last=float(data.get("lastPrice", 0) or 0),
+                volume=int(data.get("volume", 0) or 0),
+                open_interest=int(data.get("openInterest", 0) or 0),
+                implied_volatility=float(data.get("impliedVolatility", 0) or 0),
+            )
+
+        except Exception as e:
+            logger.debug(f"Failed to parse JSON contract: {e}")
+            return None
 
     def _parse_table_row_v2(
         self,

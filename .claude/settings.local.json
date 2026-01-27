@@ -8,7 +8,16 @@
       "Bash(python.exe:*)",
       "Bash(py -3:*)",
       "WebFetch(domain:finance.yahoo.com)",
-      "Read(//d/**)"
+      "Read(//d/**)",
+      "Bash(cd:*)",
+      "Bash(cmd.exe /c \"cd /d d:\\\\WrathallTechnologies\\\\AITrader && python test_yahoo_scraper.py MU RKLB\")",
+      "Bash(where:*)",
+      "Bash(C:Usersdwratbinpython d:WrathallTechnologiesAITradertest_alpaca_options.py MU RKLB SPY)",
+      "Bash(powershell.exe -Command \"cd d:\\\\WrathallTechnologies\\\\AITrader; python test_alpaca_options.py MU RKLB SPY\")",
+      "Bash(powershell.exe -NoProfile -Command \"Set-Location ''d:\\\\WrathallTechnologies\\\\AITrader''; python test_alpaca_options.py MU RKLB SPY 2>&1\")",
+      "Bash(powershell.exe -Command \"echo ''test''; python --version\")",
+      "Bash(powershell.exe -Command \"python --version 2>&1\")",
+      "Bash(powershell.exe -Command \"& ''C:\\\\Users\\\\dwrat\\\\bin\\\\python'' --version\")"
     ]
   }
 }
