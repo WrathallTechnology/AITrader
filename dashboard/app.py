@@ -55,13 +55,17 @@ def get_yahoo_provider():
     return _yahoo_provider
 
 
-def get_options_client():
-    """Get Options client with Yahoo Finance data provider."""
+def get_options_client(use_yahoo: bool = False):
+    """Get Options client.
+
+    Args:
+        use_yahoo: If True, use Yahoo Finance for data. If False, use Alpaca API directly.
+    """
     return OptionsClient(
         api_key=config.alpaca.api_key,
         secret_key=config.alpaca.secret_key,
         paper=config.alpaca.is_paper,
-        data_provider=get_yahoo_provider(),  # Use Yahoo for data, Alpaca for orders
+        data_provider=get_yahoo_provider() if use_yahoo else None,
     )
 
 
@@ -564,12 +568,18 @@ def api_options_debug():
     try:
         import traceback
         from datetime import date, timedelta
+        from flask import request
+
+        # Check if user wants to test with Alpaca directly
+        use_alpaca = request.args.get('alpaca', '').lower() == 'true'
 
         debug_info = {
             "timestamp": datetime.now().isoformat(),
             "tests": [],
             "errors": [],
             "watchlist": OPTIONS_WATCHLIST,
+            "data_source": "Alpaca API" if use_alpaca else "Yahoo Finance",
+            "hint": "Add ?alpaca=true to test with Alpaca API directly",
         }
 
         # Test 1: Check if market is open
@@ -582,17 +592,15 @@ def api_options_debug():
             "result": f"Market is {'OPEN' if market_open else 'CLOSED'}",
         })
 
-        # Test 2: Initialize options client with Yahoo provider
+        # Test 2: Initialize options client
         try:
-            options_client = get_options_client()
-            yahoo_provider = get_yahoo_provider()
+            options_client = get_options_client(use_yahoo=not use_alpaca)
             has_yahoo = options_client._data_provider is not None
             debug_info["tests"].append({
                 "name": "Options Client Init",
                 "passed": True,
-                "result": f"Options client initialized (Yahoo provider: {'YES' if has_yahoo else 'NO'})",
+                "result": f"Options client initialized (Data source: {'Yahoo Finance' if has_yahoo else 'Alpaca API'})",
             })
-            debug_info["data_source"] = "Yahoo Finance" if has_yahoo else "Alpaca API"
         except Exception as e:
             debug_info["tests"].append({
                 "name": "Options Client Init",
