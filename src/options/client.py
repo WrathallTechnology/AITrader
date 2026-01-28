@@ -428,12 +428,15 @@ class OptionsClient:
                         return None
                     order.limit_price = mid
 
+                # Round limit price to 2 decimal places (Alpaca requirement)
+                limit_price = round(order.limit_price, 2)
+
                 request = LimitOrderRequest(
                     symbol=order.contract.symbol,
                     qty=order.quantity,
                     side=side,
                     time_in_force=TimeInForce(order.time_in_force.lower()),
-                    limit_price=order.limit_price,
+                    limit_price=limit_price,
                 )
 
             # Submit order
