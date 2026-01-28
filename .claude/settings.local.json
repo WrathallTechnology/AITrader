@@ -17,7 +17,8 @@
       "Bash(powershell.exe -NoProfile -Command \"Set-Location ''d:\\\\WrathallTechnologies\\\\AITrader''; python test_alpaca_options.py MU RKLB SPY 2>&1\")",
       "Bash(powershell.exe -Command \"echo ''test''; python --version\")",
       "Bash(powershell.exe -Command \"python --version 2>&1\")",
-      "Bash(powershell.exe -Command \"& ''C:\\\\Users\\\\dwrat\\\\bin\\\\python'' --version\")"
+      "Bash(powershell.exe -Command \"& ''C:\\\\Users\\\\dwrat\\\\bin\\\\python'' --version\")",
+      "Bash(dir:*)"
     ]
   }
 }

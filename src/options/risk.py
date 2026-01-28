@@ -542,7 +542,7 @@ def create_risk_limits_aggressive() -> OptionsRiskLimits:
         allow_naked_puts=True,
         max_undefined_risk_positions=5,
         min_days_to_expiration=0,
-        max_days_to_expiration=2,
+        max_days_to_expiration=30,
         max_single_underlying_pct=1,
         max_single_expiration_pct=1,
     )
