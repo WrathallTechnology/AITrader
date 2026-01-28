@@ -530,19 +530,23 @@ def create_risk_limits_moderate() -> OptionsRiskLimits:
 
 
 def create_risk_limits_aggressive() -> OptionsRiskLimits:
-    """Create aggressive risk limits for experienced traders."""
+    """Create aggressive risk limits for short-term options trading.
+
+    Note: 'Aggressive' refers to short DTE and single-stock concentration,
+    NOT to large position sizes. Position sizes are kept small.
+    """
     return OptionsRiskLimits(
-        max_single_position_value=10000,
-        max_total_options_exposure=50000,
-        max_positions=20,
-        max_portfolio_delta=1000,
-        max_portfolio_gamma=200,
-        max_portfolio_theta=-100,
-        allow_naked_calls=True,  # Requires high margin
-        allow_naked_puts=True,
-        max_undefined_risk_positions=5,
+        max_single_position_value=500,  # $500 max per position
+        max_total_options_exposure=1000,  # $1000 total options exposure
+        max_positions=5,  # Max 5 positions
+        max_portfolio_delta=100,
+        max_portfolio_gamma=50,
+        max_portfolio_theta=-25,
+        allow_naked_calls=False,  # Too risky
+        allow_naked_puts=True,  # Cash-secured puts OK
+        max_undefined_risk_positions=2,
         min_days_to_expiration=0,
         max_days_to_expiration=30,
-        max_single_underlying_pct=1,
-        max_single_expiration_pct=1,
+        max_single_underlying_pct=0.50,  # Max 50% in one stock
+        max_single_expiration_pct=0.50,  # Max 50% in one expiration
     )

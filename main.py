@@ -377,6 +377,10 @@ class AITrader:
         self._cycle_orders_value = 0.0
         self._cycle_orders_count = 0
 
+        # Reset options-specific cycle tracking
+        self._options_cycle_value = 0.0
+        self._options_cycle_count = 0
+
         # Run scanner on first cycle or every 10 minutes
         should_scan = not hasattr(self, "_last_options_scan") or \
                       (datetime.now() - self._last_options_scan).total_seconds() > 600
@@ -395,17 +399,46 @@ class AITrader:
                 )
 
                 if opportunities:
-                    logger.info(f"Options scanner found {len(opportunities)} opportunities:")
-                    for opp in opportunities[:5]:
+                    # Filter to tradeable opportunities (score >= 60 with signal)
+                    tradeable = [o for o in opportunities if o.signal and o.score >= 60]
+                    logger.info(
+                        f"Options scanner found {len(opportunities)} opportunities, "
+                        f"{len(tradeable)} tradeable (score >= 60)"
+                    )
+
+                    # Log top 5 opportunities ranked by score
+                    for i, opp in enumerate(opportunities[:5], 1):
                         signal_info = ""
                         if opp.signal:
                             signal_info = f" - {opp.signal.spread_type.value} ({opp.signal.confidence:.0%})"
-                        logger.info(f"  {opp.symbol}: {opp.opportunity_type} score={opp.score:.0f}{signal_info}")
+                        tradeable_tag = " [TRADEABLE]" if opp in tradeable else ""
+                        logger.info(f"  #{i}: {opp.symbol} score={opp.score:.0f}{signal_info}{tradeable_tag}")
 
-                    # Evaluate top opportunities for trading
-                    for opp in opportunities:
-                        if opp.signal and opp.score >= 60:
-                            self._evaluate_options_trade(opp)
+                    # Evaluate opportunities best-first until limits reached
+                    traded_count = 0
+                    for i, opp in enumerate(tradeable, 1):
+                        # Check if we've already hit the cycle limit
+                        if self._options_cycle_value >= self.options_risk.limits.max_total_options_exposure:
+                            logger.info(
+                                f"Stopping at opportunity #{i}: cycle exposure limit reached "
+                                f"(${self._options_cycle_value:.0f}/${self.options_risk.limits.max_total_options_exposure:.0f})"
+                            )
+                            break
+                        if self._options_cycle_count >= self.options_risk.limits.max_positions:
+                            logger.info(
+                                f"Stopping at opportunity #{i}: max positions limit reached "
+                                f"({self._options_cycle_count}/{self.options_risk.limits.max_positions})"
+                            )
+                            break
+
+                        logger.info(f"Evaluating opportunity #{i}/{len(tradeable)}: {opp.symbol} (score={opp.score:.0f})")
+                        self._evaluate_options_trade(opp)
+                        traded_count += 1
+
+                    logger.info(
+                        f"Options cycle complete: evaluated {traded_count}/{len(tradeable)} opportunities, "
+                        f"exposure=${self._options_cycle_value:.0f}, positions={self._options_cycle_count}"
+                    )
                 else:
                     logger.info("No options opportunities found")
 
@@ -732,6 +765,11 @@ class AITrader:
 
         from src.options import OptionOrder, OrderAction
 
+        # Initialize cycle tracking if not present
+        if not hasattr(self, "_options_cycle_value"):
+            self._options_cycle_value = 0.0
+            self._options_cycle_count = 0
+
         # Check risk limits
         account = self.client.get_account()
         account_value = float(account.portfolio_value)
@@ -740,8 +778,14 @@ class AITrader:
         if config.trading.initial_capital is not None:
             account_value = config.trading.initial_capital
 
+        # Get risk limits for cycle-level checks
+        max_exposure = self.options_risk.limits.max_total_options_exposure
+        max_positions = self.options_risk.limits.max_positions
+
         # Build orders for all contracts in the signal
         orders_to_submit = []
+        total_order_value = 0.0
+
         for contract in signal.contracts:
             order = OptionOrder(
                 contract=contract,
@@ -749,6 +793,23 @@ class AITrader:
                 quantity=1,
                 limit_price=contract.mid_price,
             )
+
+            order_value = order.estimated_cost
+
+            # Check cycle-level limits BEFORE individual risk check
+            if self._options_cycle_value + total_order_value + order_value > max_exposure:
+                logger.info(
+                    f"Skipping {contract.symbol}: would exceed cycle exposure limit "
+                    f"(${self._options_cycle_value + total_order_value + order_value:.0f} > ${max_exposure:.0f})"
+                )
+                return
+
+            if self._options_cycle_count + len(orders_to_submit) + 1 > max_positions:
+                logger.info(
+                    f"Skipping {contract.symbol}: would exceed max positions limit "
+                    f"({self._options_cycle_count + len(orders_to_submit) + 1} > {max_positions})"
+                )
+                return
 
             passes, violations = self.options_risk.check_order(order, account_value)
 
@@ -758,6 +819,7 @@ class AITrader:
                 return
 
             orders_to_submit.append(order)
+            total_order_value += order_value
 
         # Log opportunity
         logger.info(
@@ -778,6 +840,14 @@ class AITrader:
 
                 if order_id:
                     logger.info(f"Options order submitted: {order_id} - {order.contract.symbol}")
+
+                    # Track cycle-level exposure
+                    self._options_cycle_value += order.estimated_cost
+                    self._options_cycle_count += 1
+                    logger.debug(
+                        f"Cycle exposure: ${self._options_cycle_value:.0f} / "
+                        f"${self.options_risk.limits.max_total_options_exposure:.0f}"
+                    )
 
                     # Log the transaction
                     save_transaction({
