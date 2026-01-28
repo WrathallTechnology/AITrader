@@ -418,7 +418,7 @@ class OptionsClient:
                     symbol=order.contract.symbol,
                     qty=order.quantity,
                     side=side,
-                    time_in_force=TimeInForce(order.time_in_force.upper()),
+                    time_in_force=TimeInForce(order.time_in_force.lower()),
                 )
             else:
                 if order.limit_price is None:
@@ -432,7 +432,7 @@ class OptionsClient:
                     symbol=order.contract.symbol,
                     qty=order.quantity,
                     side=side,
-                    time_in_force=TimeInForce(order.time_in_force.upper()),
+                    time_in_force=TimeInForce(order.time_in_force.lower()),
                     limit_price=order.limit_price,
                 )
 
