@@ -18,7 +18,9 @@
       "Bash(powershell.exe -Command \"echo ''test''; python --version\")",
       "Bash(powershell.exe -Command \"python --version 2>&1\")",
       "Bash(powershell.exe -Command \"& ''C:\\\\Users\\\\dwrat\\\\bin\\\\python'' --version\")",
-      "Bash(dir:*)"
+      "Bash(dir:*)",
+      "Bash(findstr:*)",
+      "Bash(Get-Content \"d:\\\\WrathallTechnologies\\\\AITrader\\\\logs\\\\trading.log\" -Tail 150)"
     ]
   }
 }

@@ -250,6 +250,17 @@ class AITrader:
             watchlist=self.stock_watchlist,
         )
 
+        # Log options risk limits at startup for verification
+        limits = self.options_risk.limits
+        logger.info("=" * 50)
+        logger.info("OPTIONS RISK LIMITS (VERIFY THESE ARE CORRECT!):")
+        logger.info(f"  Max Single Position: ${limits.max_single_position_value:.0f}")
+        logger.info(f"  Max Total Exposure:  ${limits.max_total_options_exposure:.0f}")
+        logger.info(f"  Max Positions:       {limits.max_positions}")
+        logger.info(f"  Min DTE:             {limits.min_days_to_expiration} days")
+        logger.info(f"  Max DTE:             {limits.max_days_to_expiration} days")
+        logger.info("=" * 50)
+
     def get_effective_capital(self) -> float:
         """Get the capital amount to use for trading."""
         account = self.client.get_account()
@@ -377,9 +388,52 @@ class AITrader:
         self._cycle_orders_value = 0.0
         self._cycle_orders_count = 0
 
-        # Reset options-specific cycle tracking
-        self._options_cycle_value = 0.0
-        self._options_cycle_count = 0
+        # CRITICAL: Sync existing positions to risk manager BEFORE checking limits
+        # This ensures we account for all positions, not just ones from this cycle
+        try:
+            existing_positions = self.options_client.get_positions()
+            self.options_risk.set_positions(existing_positions)
+
+            # Calculate existing exposure from positions
+            existing_exposure = sum(
+                pos.avg_cost * abs(pos.quantity) * pos.contract.multiplier
+                for pos in existing_positions
+            )
+            existing_count = len(existing_positions)
+
+            logger.info(
+                f"Options status: {existing_count} positions, "
+                f"${existing_exposure:.0f} exposure "
+                f"(limit: ${self.options_risk.limits.max_total_options_exposure:.0f})"
+            )
+
+            # Start cycle tracking from existing exposure (not 0!)
+            self._options_cycle_value = existing_exposure
+            self._options_cycle_count = existing_count
+
+            # Check if already at limit - skip entire scan if so
+            if existing_exposure >= self.options_risk.limits.max_total_options_exposure:
+                logger.info(
+                    f"Already at options exposure limit "
+                    f"(${existing_exposure:.0f} >= ${self.options_risk.limits.max_total_options_exposure:.0f}) - skipping scan"
+                )
+                return
+            if existing_count >= self.options_risk.limits.max_positions:
+                logger.info(
+                    f"Already at max options positions "
+                    f"({existing_count} >= {self.options_risk.limits.max_positions}) - skipping scan"
+                )
+                return
+
+            remaining_exposure = self.options_risk.limits.max_total_options_exposure - existing_exposure
+            remaining_positions = self.options_risk.limits.max_positions - existing_count
+            logger.info(f"Room for: ${remaining_exposure:.0f} more exposure, {remaining_positions} more positions")
+
+        except Exception as e:
+            logger.warning(f"Failed to sync options positions: {e}")
+            # If we can't check positions, be conservative and skip
+            logger.warning("Skipping options cycle due to position sync failure")
+            return
 
         # Run scanner on first cycle or every 10 minutes
         should_scan = not hasattr(self, "_last_options_scan") or \
@@ -787,6 +841,14 @@ class AITrader:
         total_order_value = 0.0
 
         for contract in signal.contracts:
+            # SAFETY: Skip contracts without valid prices
+            if contract.mid_price is None or contract.mid_price <= 0:
+                logger.warning(
+                    f"Skipping {contract.symbol}: no valid price "
+                    f"(bid={contract.bid}, ask={contract.ask}, mid={contract.mid_price})"
+                )
+                return
+
             order = OptionOrder(
                 contract=contract,
                 action=OrderAction.BUY_TO_OPEN,
@@ -795,6 +857,13 @@ class AITrader:
             )
 
             order_value = order.estimated_cost
+
+            # SAFETY: Double-check order value is reasonable
+            if order_value <= 0:
+                logger.warning(
+                    f"Skipping {contract.symbol}: invalid order value ${order_value:.2f}"
+                )
+                return
 
             # Check cycle-level limits BEFORE individual risk check
             if self._options_cycle_value + total_order_value + order_value > max_exposure:
@@ -833,20 +902,45 @@ class AITrader:
                 logger.info(f"  {order.action.value}: {order.contract.symbol} @ ${order.limit_price:.2f}")
             return
 
+        # HARD LIMIT ENFORCEMENT - Final safety check before submission
+        max_exposure = self.options_risk.limits.max_total_options_exposure
+        projected_exposure = self._options_cycle_value + total_order_value
+        if projected_exposure > max_exposure:
+            logger.error(
+                f"HARD LIMIT BLOCKED: Order batch would exceed limit! "
+                f"Current: ${self._options_cycle_value:.0f}, "
+                f"Batch: ${total_order_value:.0f}, "
+                f"Projected: ${projected_exposure:.0f}, "
+                f"Limit: ${max_exposure:.0f}"
+            )
+            return
+
         # Execute the options trade
         try:
             for order in orders_to_submit:
+                # Per-order safety check
+                order_cost = order.estimated_cost
+                if self._options_cycle_value + order_cost > max_exposure:
+                    logger.error(
+                        f"HARD LIMIT: Skipping {order.contract.symbol} - "
+                        f"would exceed limit (${self._options_cycle_value:.0f} + ${order_cost:.0f} > ${max_exposure:.0f})"
+                    )
+                    continue
+
                 order_id = self.options_client.submit_order(order)
 
                 if order_id:
-                    logger.info(f"Options order submitted: {order_id} - {order.contract.symbol}")
+                    logger.info(
+                        f"Options order submitted: {order_id} - {order.contract.symbol} "
+                        f"(cost: ${order_cost:.0f}, total: ${self._options_cycle_value + order_cost:.0f}/{max_exposure:.0f})"
+                    )
 
                     # Track cycle-level exposure
-                    self._options_cycle_value += order.estimated_cost
+                    self._options_cycle_value += order_cost
                     self._options_cycle_count += 1
-                    logger.debug(
-                        f"Cycle exposure: ${self._options_cycle_value:.0f} / "
-                        f"${self.options_risk.limits.max_total_options_exposure:.0f}"
+                    logger.info(
+                        f"Cycle exposure: ${self._options_cycle_value:.0f} / ${max_exposure:.0f} "
+                        f"({self._options_cycle_value / max_exposure * 100:.0f}% used)"
                     )
 
                     # Log the transaction

@@ -392,62 +392,59 @@
         </div>
 
         <!-- Watchlist Signals Section -->
-        <h2 class="section-title">Watchlist Signals</h2>
+        <h2 class="section-title">Stock Watchlist</h2>
         <div class="card">
             <div style="display: flex; gap: 10px; margin-bottom: 15px; align-items: center;">
-                <p style="color: #888; font-size: 12px; margin: 0;">Technical & ML signals for all watched assets</p>
-                <select id="signals-filter" onchange="updateSignals()" style="background: #2a2a2a; color: #fff; border: 1px solid #444; padding: 4px 8px; border-radius: 4px; font-size: 12px;">
-                    <option value="all">All Assets</option>
-                    <option value="stock">Stocks Only</option>
-                </select>
-                <span id="market-status" style="margin-left: auto; font-size: 11px; padding: 3px 8px; border-radius: 4px;"></span>
+                <span id="market-status" style="font-size: 11px; padding: 3px 8px; border-radius: 4px;"></span>
+                <span style="color: #666; font-size: 11px; margin-left: auto;">Updates when market is open</span>
             </div>
-            <table class="positions-table" id="signals-table">
-                <thead>
-                    <tr>
-                        <th>Symbol</th>
-                        <th>Type</th>
-                        <th>Price</th>
-                        <th>24h</th>
-                        <th>RSI</th>
-                        <th>MACD</th>
-                        <th>Technical</th>
-                        <th>ML</th>
-                        <th>Reason</th>
-                    </tr>
-                </thead>
-                <tbody id="signals-table-body">
-                    <tr>
-                        <td colspan="9" style="text-align: center; color: #666;">Loading signals...</td>
-                    </tr>
-                </tbody>
-            </table>
+            <div id="signals-container">
+                <div style="text-align: center; color: #666; padding: 20px;">Loading signals...</div>
+            </div>
+        </div>
+
+        <!-- Options Status Card -->
+        <h2 class="section-title" style="margin-top: 30px;">Options Trading</h2>
+        <div class="grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 20px;">
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Options Exposure</span>
+                </div>
+                <div class="card-value" id="options-exposure">$0</div>
+                <div style="font-size: 11px; color: #888;" id="options-exposure-limit">of $1,000 limit</div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Positions</span>
+                </div>
+                <div class="card-value" id="options-positions-count">0</div>
+                <div style="font-size: 11px; color: #888;" id="options-positions-limit">of 5 max</div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Market Trend</span>
+                </div>
+                <div class="card-value" id="market-trend-value">-</div>
+                <div style="font-size: 11px; color: #888;">SPY-based detection</div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Opportunities</span>
+                </div>
+                <div class="card-value" id="opportunities-count">0</div>
+                <div style="font-size: 11px; color: #888;" id="opportunities-watchlist">scanning...</div>
+            </div>
         </div>
 
         <!-- Options Scanner Section -->
-        <h2 class="section-title" style="margin-top: 30px;">Options Scanner</h2>
         <div class="card">
-            <p style="color: #888; font-size: 12px; margin-bottom: 15px;">Scans top stocks for options opportunities (high IV, unusual volume, strategy signals)</p>
-            <table class="positions-table" id="options-scanner-table">
-                <thead>
-                    <tr>
-                        <th>Symbol</th>
-                        <th>Price</th>
-                        <th>Type</th>
-                        <th>Score</th>
-                        <th>Strategy</th>
-                        <th>Spread</th>
-                        <th>Confidence</th>
-                        <th>Expected P/L</th>
-                        <th>Rationale</th>
-                    </tr>
-                </thead>
-                <tbody id="options-scanner-table-body">
-                    <tr>
-                        <td colspan="9" style="text-align: center; color: #666;">Loading options scanner...</td>
-                    </tr>
-                </tbody>
-            </table>
+            <div class="card-header" style="margin-bottom: 10px;">
+                <span style="font-size: 16px; font-weight: 600; color: #fff;">Ranked Opportunities</span>
+                <span id="scanner-last-update" style="font-size: 11px; color: #666;">-</span>
+            </div>
+            <div id="options-scanner-container">
+                <div style="text-align: center; color: #666; padding: 20px;">Loading options scanner...</div>
+            </div>
         </div>
 
         <!-- Options Positions Section -->
@@ -537,35 +534,25 @@
             </table>
         </div>
 
-        <!-- Debug Tools Section -->
-        <h2 class="section-title" style="margin-top: 30px;">Debug Tools</h2>
-        <div class="card">
-            <div style="display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; align-items: center;">
-                <button onclick="runOptionsDebug()" class="debug-btn" id="debug-btn">Run Options Diagnostics</button>
-                <button onclick="clearDebugPanel()" class="debug-btn debug-btn-secondary">Clear</button>
-                <span id="debug-status" style="color: #888; font-size: 12px;"></span>
-            </div>
-
-            <!-- Debug Results Panel -->
-            <div id="debug-results" style="display: none;">
-                <div style="margin-bottom: 15px;">
-                    <h4 style="color: #fff; margin-bottom: 10px;">Test Results</h4>
-                    <div id="debug-tests"></div>
+        <!-- Diagnostics (collapsed by default) -->
+        <details style="margin-top: 30px;">
+            <summary style="cursor: pointer; color: #666; font-size: 12px; padding: 10px 0;">
+                Advanced Diagnostics (click to expand)
+            </summary>
+            <div class="card" style="margin-top: 10px;">
+                <div style="display: flex; gap: 10px; margin-bottom: 15px; align-items: center;">
+                    <button onclick="runOptionsDebug()" class="debug-btn debug-btn-secondary" id="debug-btn">Run Options Test</button>
+                    <span id="debug-status" style="color: #888; font-size: 12px;"></span>
                 </div>
-                <div id="debug-details" style="display: none;">
-                    <h4 style="color: #fff; margin-bottom: 10px;">Details</h4>
-                    <div class="logs-container" style="max-height: 300px;">
-                        <pre id="debug-json" style="color: #4fc3f7; font-size: 11px; white-space: pre-wrap;"></pre>
+                <div id="debug-results" style="display: none;">
+                    <div id="debug-tests" style="font-size: 12px;"></div>
+                    <div id="debug-details" style="display: none; margin-top: 10px;">
+                        <pre id="debug-json" style="color: #4fc3f7; font-size: 10px; white-space: pre-wrap; max-height: 200px; overflow-y: auto; background: #0a0a0f; padding: 10px; border-radius: 4px;"></pre>
                     </div>
-                </div>
-                <div id="debug-errors" style="display: none;">
-                    <h4 style="color: #ff5252; margin-bottom: 10px;">Errors</h4>
-                    <div class="logs-container" style="max-height: 200px; border-color: #ff5252;">
-                        <pre id="debug-error-text" style="color: #ff5252; font-size: 11px; white-space: pre-wrap;"></pre>
-                    </div>
+                    <div id="debug-errors" style="display: none;"></div>
                 </div>
             </div>
-        </div>
+        </details>
 
         <!-- Logs Section with Filtering -->
         <h2 class="section-title" style="margin-top: 30px;">Recent Activity</h2>
@@ -657,14 +644,13 @@
             }
         }
 
-        // Update signals - new table format
+        // Update signals - card format
         async function updateSignals() {
             try {
                 const response = await fetch('/api/signals');
                 const data = await response.json();
 
-                const tbody = document.getElementById('signals-table-body');
-                const filter = document.getElementById('signals-filter').value;
+                const container = document.getElementById('signals-container');
                 const marketStatus = document.getElementById('market-status');
 
                 // Update market status indicator
@@ -679,74 +665,75 @@
                 }
 
                 if (data.error) {
-                    tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; color: #ff5252;">Error: ${data.error}</td></tr>`;
+                    container.innerHTML = `<div style="text-align: center; color: #ff5252; padding: 20px;">Error: ${data.error}</div>`;
                     return;
                 }
 
-                // Filter signals by asset type
                 let signals = data.signals || [];
-                if (filter !== 'all') {
-                    signals = signals.filter(s => s.asset_type === filter);
-                }
 
                 if (signals.length === 0) {
-                    const message = filter === 'stock' && !data.market_open
-                        ? 'Stock market closed - no stock signals available'
+                    const message = !data.market_open
+                        ? 'Market closed - signals update when market opens'
                         : 'No signals available';
-                    tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; color: #666;">${message}</td></tr>`;
+                    container.innerHTML = `<div style="text-align: center; color: #666; padding: 30px;">${message}</div>`;
                     return;
                 }
 
-                // Asset type badge colors
-                const typeColors = {
-                    'stock': { bg: 'rgba(76, 175, 80, 0.2)', color: '#4caf50' },
-                };
+                // Render as a compact grid
+                container.innerHTML = `
+                    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px;">
+                        ${signals.map(s => {
+                            if (s.error) return '';
 
-                tbody.innerHTML = signals.map(s => {
-                    if (s.error) return '';
+                            const changeClass = s.change_24h >= 0 ? 'positive' : 'negative';
+                            const changeIcon = s.change_24h >= 0 ? '▲' : '▼';
 
-                    const changeClass = s.change_24h >= 0 ? 'positive' : 'negative';
-                    const rsiClass = s.indicators.rsi < 30 ? 'positive' : s.indicators.rsi > 70 ? 'negative' : '';
-                    const macdClass = s.indicators.macd > 0 ? 'positive' : 'negative';
+                            // Determine overall signal
+                            const techType = s.technical_signal.type;
+                            const techConf = s.technical_signal.confidence;
 
-                    const typeStyle = typeColors[s.asset_type] || { bg: 'rgba(128, 128, 128, 0.2)', color: '#888' };
-                    const typeBadge = `<span style="background: ${typeStyle.bg}; color: ${typeStyle.color}; padding: 2px 6px; border-radius: 4px; font-size: 10px; text-transform: uppercase;">${s.asset_type}</span>`;
+                            let signalBg, signalColor, signalText;
+                            if (techType === 'buy') {
+                                signalBg = 'rgba(0, 200, 83, 0.15)';
+                                signalColor = '#00c853';
+                                signalText = 'BUY';
+                            } else if (techType === 'sell') {
+                                signalBg = 'rgba(255, 82, 82, 0.15)';
+                                signalColor = '#ff5252';
+                                signalText = 'SELL';
+                            } else {
+                                signalBg = 'rgba(255, 193, 7, 0.1)';
+                                signalColor = '#ffc107';
+                                signalText = 'HOLD';
+                            }
 
-                    // Technical signal badge
-                    const techType = s.technical_signal.type;
-                    const techConf = s.technical_signal.confidence;
-                    const techClass = techType === 'buy' ? 'positive' : techType === 'sell' ? 'negative' : 'neutral';
-                    const techBadge = `<span class="${techClass}" style="font-weight: 600;">${techType.toUpperCase()}</span> <span style="color: #888; font-size: 11px;">${techConf}%</span>`;
+                            // RSI indicator
+                            const rsi = s.indicators.rsi;
+                            let rsiColor = '#888';
+                            if (rsi < 30) rsiColor = '#00c853';
+                            else if (rsi > 70) rsiColor = '#ff5252';
 
-                    // ML signal badge
-                    const mlType = s.ml_signal.type;
-                    const mlConf = s.ml_signal.confidence;
-                    const mlClass = mlType === 'buy' ? 'positive' : mlType === 'sell' ? 'negative' : 'neutral';
-                    const mlBadge = mlType !== 'N/A'
-                        ? `<span class="${mlClass}" style="font-weight: 600;">${mlType.toUpperCase()}</span> <span style="color: #888; font-size: 11px;">${mlConf}%</span>`
-                        : '<span style="color: #666;">-</span>';
-
-                    // Combine reasons, prefer technical for display
-                    const reason = s.technical_signal.reason || s.ml_signal.reason || '-';
-
-                    return `
-                        <tr>
-                            <td><strong>${s.symbol}</strong></td>
-                            <td>${typeBadge}</td>
-                            <td>${formatCurrency(s.current_price)}</td>
-                            <td class="${changeClass}">${formatPercent(s.change_24h)}</td>
-                            <td class="${rsiClass}">${s.indicators.rsi || '-'}</td>
-                            <td class="${macdClass}">${s.indicators.macd ? s.indicators.macd.toFixed(4) : '-'}</td>
-                            <td>${techBadge}</td>
-                            <td>${mlBadge}</td>
-                            <td style="font-size: 11px; color: #888; max-width: 200px;">${reason}</td>
-                        </tr>
-                    `;
-                }).join('');
+                            return `
+                                <div style="background: #1a1a2a; border: 1px solid #2a2a4a; border-radius: 8px; padding: 12px;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                        <span style="font-weight: 600; color: #fff; font-size: 14px;">${s.symbol}</span>
+                                        <span style="background: ${signalBg}; color: ${signalColor}; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600;">${signalText}</span>
+                                    </div>
+                                    <div style="font-size: 16px; color: #fff; font-weight: 500;">${formatCurrency(s.current_price)}</div>
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px;">
+                                        <span class="${changeClass}" style="font-size: 12px;">${changeIcon} ${formatPercent(s.change_24h)}</span>
+                                        <span style="color: ${rsiColor}; font-size: 11px;">RSI ${rsi ? rsi.toFixed(0) : '-'}</span>
+                                    </div>
+                                    <div style="font-size: 10px; color: #666; margin-top: 6px;">${techConf}% confidence</div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                `;
             } catch (error) {
                 console.error('Error fetching signals:', error);
-                document.getElementById('signals-table-body').innerHTML =
-                    '<tr><td colspan="9" style="text-align: center; color: #ff5252;">Failed to load signals</td></tr>';
+                document.getElementById('signals-container').innerHTML =
+                    '<div style="text-align: center; color: #ff5252; padding: 20px;">Failed to load signals</div>';
             }
         }
 
@@ -821,50 +808,110 @@
                 const response = await fetch('/api/options-scanner');
                 const data = await response.json();
 
-                const tbody = document.getElementById('options-scanner-table-body');
+                const container = document.getElementById('options-scanner-container');
+                const lastUpdate = document.getElementById('scanner-last-update');
+
+                // Update status cards
+                document.getElementById('market-trend-value').textContent = data.market_trend ? data.market_trend.toUpperCase() : '-';
+                const trendEl = document.getElementById('market-trend-value');
+                if (data.market_trend === 'bullish') {
+                    trendEl.className = 'card-value positive';
+                } else if (data.market_trend === 'bearish') {
+                    trendEl.className = 'card-value negative';
+                } else {
+                    trendEl.className = 'card-value neutral';
+                }
+
+                document.getElementById('opportunities-count').textContent = data.opportunities ? data.opportunities.length : 0;
+                document.getElementById('opportunities-watchlist').textContent = data.watchlist ? data.watchlist.join(', ') : '-';
+                lastUpdate.textContent = 'Updated: ' + new Date().toLocaleTimeString();
 
                 if (data.error) {
-                    tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; color: #ff5252;">Error: ${data.error}</td></tr>`;
+                    container.innerHTML = `<div style="text-align: center; color: #ff5252; padding: 20px;">Error: ${data.error}</div>`;
                     return;
                 }
 
                 if (!data.opportunities || data.opportunities.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: #666;">No options opportunities found (market may be closed)</td></tr>';
+                    const msg = data.market_open === false ? 'Market closed - no live data' : 'No opportunities found';
+                    container.innerHTML = `<div style="text-align: center; color: #666; padding: 30px;">
+                        <div style="font-size: 14px; margin-bottom: 10px;">${msg}</div>
+                        <div style="font-size: 12px;">Watchlist: ${data.watchlist ? data.watchlist.join(', ') : '-'}</div>
+                    </div>`;
                     return;
                 }
 
-                tbody.innerHTML = data.opportunities.map(o => {
+                // Render ranked opportunity cards
+                container.innerHTML = data.opportunities.map((o, idx) => {
+                    const rank = idx + 1;
                     const scoreColor = o.score >= 70 ? '#00c853' : o.score >= 50 ? '#ffc107' : '#888';
                     const signal = o.signal;
                     const hasSignal = signal !== null;
 
-                    // Format expected P/L
-                    let plDisplay = '-';
-                    if (hasSignal && signal.expected_profit !== null && signal.max_loss !== null) {
-                        plDisplay = `<span class="positive">+${formatCurrency(signal.expected_profit)}</span> / <span class="negative">${formatCurrency(signal.max_loss)}</span>`;
-                    }
+                    // Rank badge style
+                    const rankBg = rank === 1 ? 'linear-gradient(135deg, #ffd700 0%, #ff8c00 100%)' :
+                                   rank === 2 ? 'linear-gradient(135deg, #c0c0c0 0%, #a0a0a0 100%)' :
+                                   rank === 3 ? 'linear-gradient(135deg, #cd7f32 0%, #b87333 100%)' : '#2a2a4a';
+                    const rankColor = rank <= 3 ? '#000' : '#888';
 
-                    // Format opportunity type nicely
+                    // Type badge color
                     const typeDisplay = o.opportunity_type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
 
+                    // Contract details
+                    let contractsHtml = '';
+                    if (hasSignal && signal.contracts && signal.contracts.length > 0) {
+                        contractsHtml = signal.contracts.map(c => {
+                            const typeColor = c.option_type === 'call' ? '#00c853' : '#ff5252';
+                            return `<div style="display: inline-flex; align-items: center; gap: 6px; background: #1a1a2a; padding: 4px 8px; border-radius: 4px; margin: 2px;">
+                                <span style="color: ${typeColor}; font-weight: 600; font-size: 10px;">${c.option_type.toUpperCase()}</span>
+                                <span style="color: #fff; font-size: 11px;">$${c.strike}</span>
+                                <span style="color: #666; font-size: 10px;">${c.expiration.split('T')[0]}</span>
+                                ${c.iv ? `<span style="color: #4fc3f7; font-size: 10px;">IV:${c.iv}%</span>` : ''}
+                            </div>`;
+                        }).join('');
+                    }
+
+                    // P/L display
+                    let plHtml = '';
+                    if (hasSignal && (signal.expected_profit || signal.max_loss)) {
+                        plHtml = `<div style="display: flex; gap: 15px; margin-top: 8px; font-size: 12px;">
+                            ${signal.expected_profit ? `<span><span style="color: #888;">Profit:</span> <span class="positive">+${formatCurrency(signal.expected_profit)}</span></span>` : ''}
+                            ${signal.max_loss ? `<span><span style="color: #888;">Risk:</span> <span class="negative">${formatCurrency(signal.max_loss)}</span></span>` : ''}
+                        </div>`;
+                    }
+
                     return `
-                        <tr>
-                            <td><strong>${o.symbol}</strong></td>
-                            <td>${formatCurrency(o.underlying_price)}</td>
-                            <td><span style="background: rgba(79, 195, 247, 0.2); color: #4fc3f7; padding: 2px 8px; border-radius: 4px; font-size: 11px;">${typeDisplay}</span></td>
-                            <td style="color: ${scoreColor}; font-weight: 600;">${o.score}</td>
-                            <td>${hasSignal ? signal.strategy : '-'}</td>
-                            <td>${hasSignal ? signal.spread_type.replace(/_/g, ' ') : '-'}</td>
-                            <td>${hasSignal ? signal.confidence + '%' : '-'}</td>
-                            <td style="font-size: 11px;">${plDisplay}</td>
-                            <td style="font-size: 11px; color: #888; max-width: 250px;">${hasSignal ? signal.rationale : (o.details ? JSON.stringify(o.details).substring(0, 100) : '-')}</td>
-                        </tr>
+                        <div style="background: #1a1a2a; border: 1px solid ${rank === 1 ? '#ffd700' : '#2a2a4a'}; border-radius: 8px; padding: 15px; margin-bottom: 10px;">
+                            <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                                <div style="display: flex; align-items: center; gap: 12px;">
+                                    <div style="background: ${rankBg}; color: ${rankColor}; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px;">${rank}</div>
+                                    <div>
+                                        <div style="display: flex; align-items: center; gap: 10px;">
+                                            <span style="font-size: 18px; font-weight: 600; color: #fff;">${o.symbol}</span>
+                                            <span style="color: #888; font-size: 13px;">${formatCurrency(o.underlying_price)}</span>
+                                        </div>
+                                        <div style="display: flex; gap: 8px; margin-top: 4px; flex-wrap: wrap;">
+                                            <span style="background: rgba(79, 195, 247, 0.2); color: #4fc3f7; padding: 2px 8px; border-radius: 4px; font-size: 10px;">${typeDisplay}</span>
+                                            ${hasSignal ? `<span style="background: rgba(156, 39, 176, 0.2); color: #ce93d8; padding: 2px 8px; border-radius: 4px; font-size: 10px;">${signal.strategy}</span>` : ''}
+                                            ${hasSignal ? `<span style="background: rgba(255, 193, 7, 0.2); color: #ffc107; padding: 2px 8px; border-radius: 4px; font-size: 10px;">${signal.spread_type.replace(/_/g, ' ')}</span>` : ''}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div style="text-align: right;">
+                                    <div style="font-size: 24px; font-weight: 700; color: ${scoreColor};">${Math.round(o.score)}</div>
+                                    <div style="font-size: 10px; color: #666;">SCORE</div>
+                                    ${hasSignal ? `<div style="font-size: 11px; color: #888; margin-top: 4px;">Conf: ${signal.confidence}%</div>` : ''}
+                                </div>
+                            </div>
+                            ${contractsHtml ? `<div style="margin-top: 10px;">${contractsHtml}</div>` : ''}
+                            ${plHtml}
+                            ${hasSignal && signal.rationale ? `<div style="margin-top: 10px; font-size: 12px; color: #888; line-height: 1.4;">${signal.rationale}</div>` : ''}
+                        </div>
                     `;
                 }).join('');
             } catch (error) {
                 console.error('Error fetching options scanner:', error);
-                document.getElementById('options-scanner-table-body').innerHTML =
-                    '<tr><td colspan="9" style="text-align: center; color: #ff5252;">Failed to load options scanner</td></tr>';
+                document.getElementById('options-scanner-container').innerHTML =
+                    '<div style="text-align: center; color: #ff5252; padding: 20px;">Failed to load options scanner</div>';
             }
         }
 
@@ -875,6 +922,40 @@
                 const data = await response.json();
 
                 const tbody = document.getElementById('options-positions-table-body');
+
+                // Calculate total exposure from positions
+                let totalExposure = 0;
+                let positionsCount = 0;
+
+                if (data.positions && data.positions.length > 0) {
+                    positionsCount = data.positions.length;
+                    totalExposure = data.positions.reduce((sum, p) => {
+                        // Exposure = avg_cost * quantity * 100 (per contract)
+                        return sum + (p.avg_cost * Math.abs(p.quantity) * 100);
+                    }, 0);
+                }
+
+                // Update exposure indicator cards
+                const exposureEl = document.getElementById('options-exposure');
+                const exposureLimitEl = document.getElementById('options-exposure-limit');
+                const posCountEl = document.getElementById('options-positions-count');
+
+                exposureEl.textContent = formatCurrency(totalExposure);
+                posCountEl.textContent = positionsCount;
+
+                // Color based on utilization
+                const maxExposure = 1000; // Match the limit from risk.py
+                const utilizationPct = (totalExposure / maxExposure) * 100;
+                if (utilizationPct >= 80) {
+                    exposureEl.className = 'card-value negative';
+                    exposureLimitEl.innerHTML = `<span style="color: #ff5252;">${utilizationPct.toFixed(0)}% of $${maxExposure.toLocaleString()} limit</span>`;
+                } else if (utilizationPct >= 50) {
+                    exposureEl.className = 'card-value neutral';
+                    exposureLimitEl.textContent = `${utilizationPct.toFixed(0)}% of $${maxExposure.toLocaleString()} limit`;
+                } else {
+                    exposureEl.className = 'card-value positive';
+                    exposureLimitEl.textContent = `${utilizationPct.toFixed(0)}% of $${maxExposure.toLocaleString()} limit`;
+                }
 
                 if (data.error && !data.positions) {
                     tbody.innerHTML = `<tr><td colspan="10" style="text-align: center; color: #ff5252;">Error: ${data.error}</td></tr>`;
@@ -1008,115 +1089,57 @@
             document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
         }
 
-        // Debug functions
+        // Debug functions (compact)
         async function runOptionsDebug() {
             const btn = document.getElementById('debug-btn');
             const status = document.getElementById('debug-status');
             const results = document.getElementById('debug-results');
             const tests = document.getElementById('debug-tests');
             const details = document.getElementById('debug-details');
-            const errors = document.getElementById('debug-errors');
 
             btn.disabled = true;
-            btn.textContent = 'Running...';
-            status.textContent = 'Running diagnostics...';
-            results.style.display = 'none';
+            btn.textContent = 'Testing...';
+            status.textContent = '';
 
             try {
                 const response = await fetch('/api/options-debug');
                 const data = await response.json();
-
                 results.style.display = 'block';
 
-                // Render test results
+                // Compact test results
                 if (data.tests && data.tests.length > 0) {
-                    tests.innerHTML = data.tests.map(t => `
-                        <div class="debug-test-item">
-                            <div class="debug-test-icon ${t.passed ? 'debug-test-pass' : 'debug-test-fail'}">
-                                ${t.passed ? '✓' : '✗'}
-                            </div>
-                            <span class="debug-test-name">${t.name}</span>
-                            <span class="debug-test-result">${t.result}</span>
+                    const passed = data.summary.passed;
+                    const total = data.summary.total;
+                    const color = data.summary.all_passed ? '#00c853' : '#ff5252';
+
+                    tests.innerHTML = `
+                        <div style="margin-bottom: 10px;">
+                            <span style="color: ${color}; font-weight: 600;">${passed}/${total} tests passed</span>
+                            <span style="color: #666; margin-left: 10px;">Source: ${data.data_source || 'Unknown'}</span>
                         </div>
-                    `).join('');
-
-                    // Summary
-                    const summary = data.summary;
-                    const summaryColor = summary.all_passed ? '#00c853' : '#ff5252';
-                    status.innerHTML = `<span style="color: ${summaryColor}; font-weight: 600;">${summary.passed}/${summary.total} tests passed</span>`;
-                } else {
-                    tests.innerHTML = '<p style="color: #666;">No test results</p>';
+                        ${data.tests.filter(t => !t.passed).map(t =>
+                            `<div style="color: #ff5252; font-size: 11px;">✗ ${t.name}: ${t.result}</div>`
+                        ).join('')}
+                    `;
                 }
 
-                // Show details (chain sample, contracts, etc.)
-                const detailData = {};
-                if (data.chain_sample) detailData.chain_sample = data.chain_sample;
-                if (data.suitable_contracts) detailData.suitable_contracts = data.suitable_contracts;
-                if (data.scanner_results) detailData.scanner_results = data.scanner_results;
-                if (data.iv_analysis) detailData.iv_analysis = data.iv_analysis;
-                if (data.scan_diagnostics) detailData.scan_diagnostics = data.scan_diagnostics;
-
-                if (Object.keys(detailData).length > 0) {
+                // Show scanner results summary
+                if (data.scanner_results && data.scanner_results.length > 0) {
                     details.style.display = 'block';
-
-                    // Format IV Analysis nicely if present
-                    let detailsHtml = '';
-                    if (data.iv_analysis) {
-                        const iv = data.iv_analysis;
-                        detailsHtml += `<div style="background: #1a1a2a; padding: 10px; border-radius: 6px; margin-bottom: 10px;">
-                            <strong style="color: #4fc3f7;">IV Analysis:</strong>
-                            <div style="margin-top: 5px; font-size: 12px;">
-                                <div>Avg IV: <span style="color: #fff;">${iv.avg_iv}%</span></div>
-                                <div>IV Rank: <span style="color: #fff;">${iv.iv_rank}</span></div>
-                                <div style="color: #ffc107;">${iv.iv_interpretation}</div>
-                            </div>
-                        </div>`;
-                    }
-
-                    // Format scan diagnostics if no opportunities
-                    if (data.scan_diagnostics) {
-                        const diag = data.scan_diagnostics;
-                        detailsHtml += `<div style="background: rgba(255, 193, 7, 0.1); border: 1px solid #ffc107; padding: 10px; border-radius: 6px; margin-bottom: 10px;">
-                            <strong style="color: #ffc107;">Why No Opportunities Found:</strong>
-                            <ul style="margin: 5px 0 0 20px; font-size: 12px; color: #888;">
-                                ${diag.why_no_opportunities.map(r => `<li>${r}</li>`).join('')}
-                            </ul>
-                            <div style="margin-top: 10px;"><strong style="color: #4fc3f7;">Suggestions:</strong></div>
-                            <ul style="margin: 5px 0 0 20px; font-size: 12px; color: #888;">
-                                ${diag.suggestions.map(s => `<li>${s}</li>`).join('')}
-                            </ul>
-                        </div>`;
-                    }
-
-                    // Add raw JSON for other details
-                    detailsHtml += `<pre style="color: #4fc3f7; font-size: 11px; white-space: pre-wrap; margin-top: 10px;">${JSON.stringify(detailData, null, 2)}</pre>`;
-
-                    document.getElementById('debug-json').innerHTML = detailsHtml;
-                } else {
-                    details.style.display = 'none';
-                }
-
-                // Show errors if any
-                if (data.errors && data.errors.length > 0) {
-                    errors.style.display = 'block';
-                    document.getElementById('debug-error-text').textContent = data.errors.join('\n\n');
-                } else {
-                    errors.style.display = 'none';
+                    document.getElementById('debug-json').textContent = JSON.stringify(data.scanner_results, null, 2);
+                } else if (data.symbol_tests) {
+                    details.style.display = 'block';
+                    document.getElementById('debug-json').textContent = JSON.stringify(data.symbol_tests, null, 2);
                 }
 
             } catch (error) {
                 status.innerHTML = `<span style="color: #ff5252;">Error: ${error.message}</span>`;
-                tests.innerHTML = `<p style="color: #ff5252;">Failed to run diagnostics: ${error.message}</p>`;
                 results.style.display = 'block';
+                tests.innerHTML = '';
             } finally {
                 btn.disabled = false;
-                btn.textContent = 'Run Options Diagnostics';
+                btn.textContent = 'Run Options Test';
             }
-        }
-
-        function clearDebugPanel() {
-            document.getElementById('debug-results').style.display = 'none';
-            document.getElementById('debug-status').textContent = '';
         }
 
         // Log filtering functions
