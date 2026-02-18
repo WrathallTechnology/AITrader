@@ -403,6 +403,18 @@
             </div>
         </div>
 
+        <!-- WSB Sentiment Section -->
+        <h2 class="section-title" style="margin-top: 30px;">WSB Sentiment</h2>
+        <div class="card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <span style="font-size: 13px; color: #888;">Reddit r/wallstreetbets + Gemini AI analysis</span>
+                <span id="wsb-last-update" style="font-size: 11px; color: #666;">-</span>
+            </div>
+            <div id="wsb-container">
+                <div style="text-align: center; color: #666; padding: 20px;">Loading WSB data...</div>
+            </div>
+        </div>
+
         <!-- Options Status Card -->
         <h2 class="section-title" style="margin-top: 30px;">Options Trading</h2>
         <div class="grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 20px;">
@@ -1075,11 +1087,121 @@
             }
         }
 
+        // Update WSB Sentiment
+        async function updateWSBSentiment() {
+            try {
+                const response = await fetch('/api/wsb-sentiment');
+                const data = await response.json();
+
+                const container = document.getElementById('wsb-container');
+                document.getElementById('wsb-last-update').textContent = 'Updated: ' + new Date().toLocaleTimeString();
+
+                if (data.error) {
+                    container.innerHTML = `<div style="text-align: center; color: #ff5252; padding: 20px;">Error: ${data.error}</div>`;
+                    return;
+                }
+
+                const symbols = data.symbols || [];
+                if (symbols.length === 0) {
+                    container.innerHTML = '<div style="text-align: center; color: #666; padding: 20px;">No WSB data available</div>';
+                    return;
+                }
+
+                const geminiEnabled = data.gemini_enabled;
+
+                container.innerHTML = symbols.map(s => {
+                    if (s.error) {
+                        return `<div style="background: #1a1a2a; border: 1px solid #2a2a4a; border-radius: 8px; padding: 12px; margin-bottom: 8px;">
+                            <span style="font-weight: 600; color: #fff;">${s.symbol}</span>
+                            <span style="color: #ff5252; font-size: 12px; margin-left: 10px;">Error: ${s.error}</span>
+                        </div>`;
+                    }
+
+                    if (s.post_count === 0) {
+                        return `<div style="background: #1a1a2a; border: 1px solid #2a2a4a; border-radius: 8px; padding: 12px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
+                            <span style="font-weight: 600; color: #fff;">${s.symbol}</span>
+                            <span style="color: #555; font-size: 12px;">No WSB activity this week</span>
+                        </div>`;
+                    }
+
+                    // Sentiment badge
+                    let sentimentHtml = '';
+                    if (s.sentiment) {
+                        const dir = s.sentiment.direction;
+                        const conf = Math.round(s.sentiment.confidence * 100);
+                        let sentColor, sentBg;
+                        if (dir === 'bullish') { sentColor = '#00c853'; sentBg = 'rgba(0, 200, 83, 0.15)'; }
+                        else if (dir === 'bearish') { sentColor = '#ff5252'; sentBg = 'rgba(255, 82, 82, 0.15)'; }
+                        else { sentColor = '#ffc107'; sentBg = 'rgba(255, 193, 7, 0.1)'; }
+
+                        const strategyDisplay = s.sentiment.strategy.replace(/_/g, ' ');
+
+                        sentimentHtml = `
+                            <div style="margin-top: 10px; padding: 10px; background: ${sentBg}; border-radius: 6px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                                    <div style="display: flex; align-items: center; gap: 8px;">
+                                        <span style="color: ${sentColor}; font-weight: 700; font-size: 14px;">${dir.toUpperCase()}</span>
+                                        <span style="color: #888; font-size: 12px;">${conf}% confidence</span>
+                                    </div>
+                                    <span style="background: rgba(156, 39, 176, 0.2); color: #ce93d8; padding: 2px 8px; border-radius: 4px; font-size: 10px;">${strategyDisplay}</span>
+                                </div>
+                                <div style="font-size: 12px; color: #aaa; line-height: 1.4;">${s.sentiment.reasoning}</div>
+                                ${s.sentiment.themes && s.sentiment.themes.length > 0 ? `
+                                    <div style="margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap;">
+                                        ${s.sentiment.themes.map(t => `<span style="background: #2a2a4a; color: #888; padding: 2px 6px; border-radius: 3px; font-size: 10px;">${t}</span>`).join('')}
+                                    </div>
+                                ` : ''}
+                                ${s.sentiment.risk_warning ? `<div style="margin-top: 6px; font-size: 11px; color: #ff9800;">Risk: ${s.sentiment.risk_warning}</div>` : ''}
+                            </div>
+                        `;
+                    } else if (!geminiEnabled) {
+                        sentimentHtml = '<div style="margin-top: 8px; font-size: 11px; color: #555;">Set GEMINI_API_KEY in .env for AI analysis</div>';
+                    }
+
+                    // Top posts
+                    const postsHtml = (s.posts || []).slice(0, 5).map(p => {
+                        const scoreColor = p.score > 100 ? '#00c853' : p.score > 20 ? '#ffc107' : '#666';
+                        const flairBadge = p.flair ? `<span style="background: rgba(79, 195, 247, 0.15); color: #4fc3f7; padding: 1px 5px; border-radius: 3px; font-size: 9px; margin-left: 6px;">${p.flair}</span>` : '';
+                        return `<div style="display: flex; align-items: flex-start; gap: 8px; padding: 4px 0; border-bottom: 1px solid #1a1a2a;">
+                            <span style="color: ${scoreColor}; font-size: 11px; min-width: 35px; text-align: right; font-weight: 600;">${p.score}</span>
+                            <div style="flex: 1; min-width: 0;">
+                                <a href="https://reddit.com${p.permalink}" target="_blank" style="color: #ccc; font-size: 12px; text-decoration: none; line-height: 1.3; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${p.title}</a>
+                            </div>
+                            <span style="color: #555; font-size: 10px; white-space: nowrap;">${p.num_comments} comments</span>
+                            ${flairBadge}
+                        </div>`;
+                    }).join('');
+
+                    return `
+                        <div style="background: #1a1a2a; border: 1px solid #2a2a4a; border-radius: 8px; padding: 14px; margin-bottom: 10px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <div style="display: flex; align-items: center; gap: 10px;">
+                                    <span style="font-weight: 600; color: #fff; font-size: 16px;">${s.symbol}</span>
+                                    <span style="color: #888; font-size: 12px;">${s.post_count} posts this week</span>
+                                </div>
+                                <div style="display: flex; gap: 12px; font-size: 11px; color: #666;">
+                                    <span>Avg score: ${Math.round(s.avg_score)}</span>
+                                    <span>Comments: ${s.total_comments}</span>
+                                </div>
+                            </div>
+                            ${sentimentHtml}
+                            ${postsHtml ? `<div style="margin-top: 10px;">${postsHtml}</div>` : ''}
+                        </div>
+                    `;
+                }).join('');
+            } catch (error) {
+                console.error('Error fetching WSB sentiment:', error);
+                document.getElementById('wsb-container').innerHTML =
+                    '<div style="text-align: center; color: #ff5252; padding: 20px;">Failed to load WSB data</div>';
+            }
+        }
+
         // Update all
         async function updateAll() {
             await Promise.all([
                 updateStatus(),
                 updateSignals(),
+                updateWSBSentiment(),
                 updateOptionsScanner(),
                 updateOptionsPositions(),
                 updatePositions(),

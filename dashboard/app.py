@@ -950,6 +950,140 @@ def api_news_summary():
         }), 500
 
 
+# WSB Reddit fetcher (cached globally)
+_wsb_fetcher = None
+
+
+def get_wsb_fetcher():
+    """Get WSB Reddit fetcher (singleton)."""
+    global _wsb_fetcher
+    if _wsb_fetcher is None:
+        from src.options.wsb_reddit import WSBRedditFetcher
+        _wsb_fetcher = WSBRedditFetcher(cache_ttl_seconds=300)
+    return _wsb_fetcher
+
+
+# Gemini client (cached globally)
+_gemini_client = None
+
+
+def get_gemini_client():
+    """Get Gemini sentiment client (singleton)."""
+    global _gemini_client
+    if _gemini_client is None:
+        from src.options.gemini_client import GeminiSentimentClient
+        _gemini_client = GeminiSentimentClient()
+    return _gemini_client
+
+
+@app.route("/api/wsb-sentiment")
+def api_wsb_sentiment():
+    """Get WSB sentiment data for watchlist symbols."""
+    try:
+        fetcher = get_wsb_fetcher()
+        gemini = get_gemini_client()
+
+        # Use options watchlist
+        symbols = OPTIONS_WATCHLIST
+
+        results = []
+        for symbol in symbols:
+            try:
+                wsb_data = fetcher.fetch_symbol_data(symbol)
+
+                if wsb_data is None or not wsb_data.posts:
+                    results.append({
+                        "symbol": symbol,
+                        "post_count": 0,
+                        "sentiment": None,
+                        "message": "No WSB activity",
+                    })
+                    continue
+
+                # Build result with post data
+                entry = {
+                    "symbol": symbol,
+                    "post_count": len(wsb_data.posts),
+                    "avg_score": round(wsb_data.avg_score, 0),
+                    "avg_upvote_ratio": round(wsb_data.avg_upvote_ratio, 2),
+                    "total_comments": wsb_data.total_comments,
+                    "posts": [
+                        {
+                            "title": p.title,
+                            "score": p.score,
+                            "num_comments": p.num_comments,
+                            "upvote_ratio": p.upvote_ratio,
+                            "flair": p.flair,
+                            "permalink": p.permalink,
+                        }
+                        for p in wsb_data.posts[:10]
+                    ],
+                }
+
+                # Run Gemini analysis if configured
+                if gemini.is_configured:
+                    # Get underlying price for context
+                    try:
+                        options_client = get_options_client()
+                        price = options_client._get_underlying_price(symbol)
+                    except Exception:
+                        price = 0
+
+                    posts_for_gemini = [
+                        {
+                            "title": p.title,
+                            "body": p.body,
+                            "score": p.score,
+                            "upvote_ratio": p.upvote_ratio,
+                            "num_comments": p.num_comments,
+                            "flair": p.flair,
+                        }
+                        for p in wsb_data.posts
+                    ]
+
+                    sentiment_result = gemini.analyze_wsb_sentiment(
+                        symbol=symbol,
+                        posts_data=posts_for_gemini,
+                        underlying_price=price,
+                    )
+
+                    if sentiment_result:
+                        entry["sentiment"] = {
+                            "direction": sentiment_result.sentiment,
+                            "confidence": round(sentiment_result.confidence, 2),
+                            "strategy": sentiment_result.suggested_strategy,
+                            "reasoning": sentiment_result.reasoning,
+                            "themes": sentiment_result.key_themes,
+                            "risk_warning": sentiment_result.risk_warning,
+                        }
+                    else:
+                        entry["sentiment"] = None
+                else:
+                    entry["sentiment"] = None
+                    entry["gemini_configured"] = False
+
+                results.append(entry)
+
+            except Exception as e:
+                results.append({
+                    "symbol": symbol,
+                    "error": str(e),
+                })
+
+        return jsonify({
+            "symbols": results,
+            "gemini_enabled": gemini.is_configured,
+            "timestamp": datetime.now().isoformat(),
+        })
+
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+        }), 500
+
+
 if __name__ == "__main__":
     # Run on all interfaces so it's accessible externally
     app.run(host="0.0.0.0", port=5000, debug=False)
