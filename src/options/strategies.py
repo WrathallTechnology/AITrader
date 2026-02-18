@@ -649,6 +649,18 @@ class OptionsStrategyManager:
             VolatilityStrategy(client),
         ]
 
+        # Add WSB Sentiment strategy if dependencies are available
+        try:
+            from .wsb_strategy import WSBSentimentStrategy
+            wsb = WSBSentimentStrategy(client)
+            if wsb.is_available:
+                self.strategies.append(wsb)
+                logger.info("WSB Sentiment strategy enabled")
+            else:
+                logger.info("WSB Sentiment strategy: API keys not configured, skipping")
+        except ImportError as e:
+            logger.info(f"WSB Sentiment strategy: dependencies not installed ({e})")
+
     def analyze_all(
         self,
         underlying: str,

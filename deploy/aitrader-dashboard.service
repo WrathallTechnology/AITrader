@@ -1,0 +1,26 @@
+[Unit]
+Description=AITrader Web Dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%USER%
+WorkingDirectory=/home/%USER%/aitrader
+ExecStart=/home/%USER%/aitrader/venv/bin/python dashboard/app.py
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+Environment=PYTHONUNBUFFERED=1
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aitrader-dashboard
+
+[Install]
+WantedBy=multi-user.target

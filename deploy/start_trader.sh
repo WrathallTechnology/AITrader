@@ -1,30 +1,17 @@
 #!/bin/bash
 # =============================================================================
-# Start AITrader in a screen session
+# Start AITrader trading bot
 # =============================================================================
 
-cd ~/aitrader
-source venv/bin/activate
+echo "Starting AITrader..."
+sudo systemctl start aitrader
+sleep 2
 
-# Check if already running
-if screen -list | grep -q "trader"; then
-    echo "AITrader is already running!"
-    echo "Use 'screen -r trader' to attach"
-    echo "Or './stop_trader.sh' to stop it first"
+if systemctl is-active --quiet aitrader; then
+    echo "AITrader is running."
+    echo "View logs: journalctl -u aitrader -f"
+else
+    echo "AITrader failed to start."
+    echo "Check logs: journalctl -u aitrader -n 50"
     exit 1
 fi
-
-# Start in screen session
-echo "Starting AITrader..."
-screen -dmS trader python main.py --mode options
-
-echo "=============================================="
-echo "AITrader started in background!"
-echo "=============================================="
-echo ""
-echo "Commands:"
-echo "  screen -r trader     - View live output"
-echo "  Ctrl+A then D        - Detach from screen"
-echo "  ./stop_trader.sh     - Stop the trader"
-echo "  ./logs.sh            - View recent logs"
-echo ""

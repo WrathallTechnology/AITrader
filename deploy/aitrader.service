@@ -1,0 +1,26 @@
+[Unit]
+Description=AITrader Trading Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%USER%
+WorkingDirectory=/home/%USER%/aitrader
+ExecStart=/home/%USER%/aitrader/venv/bin/python main.py --mode options
+Restart=on-failure
+RestartSec=30
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+Environment=PYTHONUNBUFFERED=1
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aitrader
+
+[Install]
+WantedBy=multi-user.target

@@ -14,8 +14,9 @@
      - Operating system: Ubuntu
      - Version: Ubuntu 22.04 LTS
      - Size: 30 GB (standard persistent disk) - FREE TIER
-   - **Firewall:** Check "Allow HTTP traffic" (optional)
+   - **Firewall:** Check "Allow HTTP traffic" (for dashboard)
 5. Click **Create**
+6. **Recommended:** Reserve a static external IP (VPC Network → IP Addresses → Reserve) so the IP doesn't change on VM stop/start.
 
 ## Step 2: Connect to VM
 
@@ -24,49 +25,27 @@ Click **SSH** button next to your VM in the console, or use:
 gcloud compute ssh aitrader --zone=us-central1-a
 ```
 
-## Step 3: Upload Your Code
+## Step 3: Run Setup Script
 
-**Option A: Using Git (recommended)**
-```bash
-# On the VM
-git clone https://github.com/YOUR_USERNAME/AITrader.git ~/aitrader
-```
-
-**Option B: Using SCP from your local machine**
-```bash
-# From your local Windows machine (PowerShell)
-gcloud compute scp --recurse "D:\WrathallTechnologies\AITrader\*" aitrader:~/aitrader/ --zone=us-central1-a
-```
-
-**Option C: Using the Cloud Console**
-1. Click the gear icon in the SSH window
-2. Select "Upload file"
-3. Upload a zip of your project, then unzip on the VM
-
-## Step 4: Run Setup Script
+The setup script clones the repo, installs dependencies, sets up systemd services, and configures swap space:
 
 ```bash
+# If the repo isn't cloned yet, clone it first:
+git clone https://github.com/WrathallTechnology/AITrader.git ~/aitrader
+
 cd ~/aitrader/deploy
 chmod +x *.sh
 ./setup_gcp.sh
 ```
 
-## Step 5: Install Python Packages
+## Step 4: Configure Environment
 
 ```bash
-cd ~/aitrader
-source venv/bin/activate
-pip install -r requirements.txt
+cp ~/aitrader/.env.example ~/aitrader/.env
+nano ~/aitrader/.env
 ```
 
-## Step 6: Configure Environment
-
-```bash
-cd ~/aitrader
-nano .env
-```
-
-Paste your configuration:
+Add your API keys:
 ```
 ALPACA_API_KEY=your_api_key_here
 ALPACA_SECRET_KEY=your_secret_key_here
@@ -77,7 +56,7 @@ LOG_LEVEL=INFO
 
 Save: `Ctrl+O`, Enter, `Ctrl+X`
 
-## Step 7: Train the Model
+## Step 5: Train the Model
 
 ```bash
 cd ~/aitrader
@@ -85,29 +64,87 @@ source venv/bin/activate
 python train_model.py --all
 ```
 
-## Step 8: Start the Bot
+## Step 6: Start Services
 
 ```bash
-cd ~/aitrader/deploy
-./start_trader.sh
+sudo systemctl start aitrader aitrader-dashboard
+```
+
+Verify they're running:
+```bash
+./deploy/status.sh
+```
+
+## CI/CD Setup (Push-to-Deploy)
+
+Once the VM is set up, configure GitHub Actions for automatic deploys on push to `main`.
+
+### Generate SSH Key
+
+On the VM:
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/deploy_key -N ""
+cat ~/.ssh/deploy_key.pub >> ~/.ssh/authorized_keys
+cat ~/.ssh/deploy_key  # Copy this output
+```
+
+### Add GitHub Secrets
+
+Go to your repo's **Settings → Secrets and variables → Actions** and add:
+
+| Secret | Value |
+|--------|-------|
+| `GCE_HOST` | Your VM's external IP address |
+| `GCE_USER` | Your SSH username on the VM |
+| `GCE_SSH_KEY` | Contents of `~/.ssh/deploy_key` (the private key) |
+
+### How It Works
+
+Every push to `main` triggers the GitHub Actions workflow (`.github/workflows/deploy.yml`) which:
+1. SSHes into your GCE instance
+2. Runs `deploy/deploy.sh` which pulls code, installs deps, and restarts services
+3. Runs a health check to verify both services started
+
+### Manual Deploy
+
+You can also trigger a deploy manually by SSHing in:
+```bash
+bash ~/aitrader/deploy/deploy.sh
 ```
 
 ## Daily Commands
 
 | Command | Description |
 |---------|-------------|
-| `./start_trader.sh` | Start the trading bot |
-| `./stop_trader.sh` | Stop the trading bot |
-| `./status.sh` | Check if bot is running |
-| `./logs.sh` | View recent log entries |
-| `screen -r trader` | Attach to live output |
-| `Ctrl+A` then `D` | Detach from screen |
+| `./deploy/start_trader.sh` | Start the trading bot |
+| `./deploy/stop_trader.sh` | Stop the trading bot |
+| `./deploy/start_dashboard.sh` | Start the web dashboard |
+| `./deploy/stop_dashboard.sh` | Stop the web dashboard |
+| `./deploy/status.sh` | Check service status |
+| `./deploy/logs.sh` | View last 50 log lines |
+| `./deploy/logs.sh -f` | Follow logs live |
+| `./deploy/logs.sh dashboard` | View dashboard logs |
+
+### systemctl Commands
+
+```bash
+# Service management
+sudo systemctl start aitrader
+sudo systemctl stop aitrader
+sudo systemctl restart aitrader
+sudo systemctl status aitrader
+
+# View logs
+journalctl -u aitrader -f          # Follow live
+journalctl -u aitrader -n 100      # Last 100 lines
+journalctl -u aitrader --since today
+```
 
 ## Monitoring
 
-**View live logs:**
+**View live trading logs:**
 ```bash
-tail -f ~/aitrader/logs/trading.log
+journalctl -u aitrader -f
 ```
 
 **Check system resources:**
@@ -119,35 +156,33 @@ htop
 
 **Bot stopped unexpectedly:**
 ```bash
-# Check logs for errors
-cat ~/aitrader/logs/trading.log | tail -100
+# Check service status and recent logs
+sudo systemctl status aitrader
+journalctl -u aitrader -n 100
 
 # Restart
-cd ~/aitrader/deploy
-./start_trader.sh
+sudo systemctl restart aitrader
+```
+
+**Service keeps crashing (restart loop):**
+
+systemd stops restarting after 5 failures in 5 minutes. Check the logs, fix the issue, then:
+```bash
+sudo systemctl reset-failed aitrader
+sudo systemctl start aitrader
 ```
 
 **Out of memory:**
-The e2-micro has only 1GB RAM. If you see memory issues:
+
+The setup script adds 1GB swap automatically. If you still see issues:
 ```bash
-# Check memory usage
 free -h
-
-# Add swap space
-sudo fallocate -l 1G /swapfile
-sudo chmod 600 /swapfile
-sudo mkswap /swapfile
-sudo swapon /swapfile
-echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+journalctl -u aitrader --since "1 hour ago" | grep -i memory
 ```
 
-**VM restarted (bot stopped):**
-Set up auto-start by adding to crontab:
-```bash
-crontab -e
-# Add this line:
-@reboot cd ~/aitrader/deploy && ./start_trader.sh
-```
+**VM restarted:**
+
+Services are enabled via systemd and start automatically on boot. No crontab needed.
 
 ## Costs
 

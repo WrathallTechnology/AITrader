@@ -31,6 +31,12 @@ from .risk import (
 )
 from .scanner import OptionsScanner, OptionOpportunity, ScanCriteria
 
+# WSB Sentiment Strategy (optional - requires praw, google-generativeai)
+try:
+    from .wsb_strategy import WSBSentimentStrategy
+except ImportError:
+    WSBSentimentStrategy = None
+
 __all__ = [
     # Models
     "OptionType",
@@ -65,4 +71,6 @@ __all__ = [
     "OptionsScanner",
     "OptionOpportunity",
     "ScanCriteria",
+    # WSB Sentiment (optional)
+    "WSBSentimentStrategy",
 ]

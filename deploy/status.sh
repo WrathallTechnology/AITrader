@@ -7,26 +7,19 @@ echo "=============================================="
 echo "AITrader Status"
 echo "=============================================="
 
-# Check if running
-if screen -list | grep -q "trader"; then
-    echo "Status: RUNNING"
-else
-    echo "Status: STOPPED"
-fi
+echo ""
+echo "Services:"
+for svc in aitrader aitrader-dashboard; do
+    STATUS=$(systemctl is-active "$svc" 2>/dev/null || true)
+    echo "  $svc: $STATUS"
+done
 
 echo ""
-
-# Show system resources
 echo "System Resources:"
 echo "  Memory: $(free -h | grep Mem | awk '{print $3 "/" $2}')"
 echo "  Disk: $(df -h ~ | tail -1 | awk '{print $3 "/" $2 " (" $5 " used)"}')"
 
 echo ""
-
-# Show recent log entry
-if [ -f ~/aitrader/logs/trading.log ]; then
-    echo "Last log entry:"
-    tail -1 ~/aitrader/logs/trading.log
-fi
-
+echo "Recent trader log:"
+journalctl -u aitrader --no-pager -n 5 2>/dev/null || echo "  No logs available"
 echo ""
