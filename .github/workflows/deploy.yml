@@ -19,4 +19,5 @@ jobs:
           script_stop: true
           timeout: 120s
           script: |
+            cd ~/aitrader && git fetch origin main && git reset --hard origin/main
             bash ~/aitrader/deploy/deploy.sh
