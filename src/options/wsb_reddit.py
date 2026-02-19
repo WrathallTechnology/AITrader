@@ -1,4 +1,9 @@
-"""Reddit WallStreetBets data fetcher via web scraping (no API key needed)."""
+"""Reddit WallStreetBets data fetcher via archive APIs (no API key needed).
+
+Uses Pullpush (Pushshift successor) and Arctic Shift as data sources.
+These archive Reddit posts and serve them via free JSON APIs without
+the IP blocking that Reddit's own endpoints enforce on cloud servers.
+"""
 
 import logging
 import re
@@ -39,16 +44,20 @@ class WSBSymbolData:
 
 class WSBRedditFetcher:
     """
-    Fetches WSB post data by scraping Reddit's public JSON endpoints.
+    Fetches WSB post data via Reddit archive APIs.
 
-    No API key or registration required. Uses endpoints like:
-    https://www.reddit.com/r/wallstreetbets/search.json?q=NVDA&sort=relevance&t=week
+    Uses multiple sources in order of preference:
+    1. Pullpush (Pushshift successor) - most reliable
+    2. Arctic Shift - backup archive
+    3. Reddit direct (old.reddit.com) - fallback for non-blocked IPs
 
     Caches results per symbol with configurable TTL.
     """
 
-    # Use old.reddit.com - more reliable for JSON endpoints (no consent walls)
-    SEARCH_URL = "https://old.reddit.com/r/{subreddit}/search.json"
+    # Archive API endpoints (no auth needed, no IP blocking)
+    PULLPUSH_URL = "https://api.pullpush.io/reddit/search/submission/"
+    ARCTIC_SHIFT_URL = "https://arctic-shift.photon-reddit.com/api/posts"
+    REDDIT_URL = "https://old.reddit.com/r/{subreddit}/search.json"
 
     def __init__(
         self,
@@ -68,13 +77,13 @@ class WSBRedditFetcher:
         self._session = requests.Session()
         self._session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7",
+            "Accept": "application/json, text/html, */*",
             "Accept-Language": "en-US,en;q=0.9",
         })
 
     @property
     def is_configured(self) -> bool:
-        """Always True - no API keys needed for web scraping."""
+        """Always True - no API keys needed for archive APIs."""
         return True
 
     def _rate_limit(self):
@@ -113,7 +122,7 @@ class WSBRedditFetcher:
                     seen_ids.add(post_id)
 
                     title = post_data.get("title", "")
-                    body = post_data.get("selftext", "")
+                    body = post_data.get("selftext", "") or ""
                     text = f"{title} {body}"
 
                     if not self._symbol_in_text(symbol, text):
@@ -122,10 +131,10 @@ class WSBRedditFetcher:
                     posts.append(WSBPost(
                         title=title,
                         body=body[:500],
-                        score=post_data.get("score", 0),
-                        upvote_ratio=post_data.get("upvote_ratio", 0.5),
-                        num_comments=post_data.get("num_comments", 0),
-                        created_utc=post_data.get("created_utc", 0),
+                        score=post_data.get("score", 0) or 0,
+                        upvote_ratio=post_data.get("upvote_ratio", 0.5) or 0.5,
+                        num_comments=post_data.get("num_comments", 0) or 0,
+                        created_utc=post_data.get("created_utc", 0) or 0,
                         permalink=post_data.get("permalink", ""),
                         flair=post_data.get("link_flair_text"),
                     ))
@@ -164,10 +173,99 @@ class WSBRedditFetcher:
             return None
 
     def _search_posts(self, query: str) -> list[dict]:
-        """Search WSB for posts matching a query via public JSON endpoint."""
+        """Search WSB posts using archive APIs with fallback chain."""
         self._rate_limit()
 
-        url = self.SEARCH_URL.format(subreddit=self.subreddit_name)
+        # Try each source in order
+        sources = [
+            ("Pullpush", self._search_pullpush),
+            ("ArcticShift", self._search_arctic_shift),
+            ("Reddit", self._search_reddit_direct),
+        ]
+
+        for source_name, search_fn in sources:
+            try:
+                results = search_fn(query)
+                if results is not None:
+                    logger.debug(f"{source_name}: {len(results)} results for '{query}'")
+                    return results
+                # None means source failed, try next
+            except Exception as e:
+                logger.debug(f"{source_name} failed for '{query}': {e}")
+                continue
+
+        logger.warning(f"All WSB sources failed for '{query}'")
+        return []
+
+    def _search_pullpush(self, query: str) -> Optional[list[dict]]:
+        """Search via Pullpush (Pushshift successor)."""
+        after_ts = int((datetime.now() - timedelta(days=7)).timestamp())
+
+        params = {
+            "subreddit": self.subreddit_name,
+            "q": query,
+            "after": after_ts,
+            "size": self.max_posts,
+            "sort": "score",
+            "sort_type": "desc",
+        }
+
+        try:
+            response = self._session.get(
+                self.PULLPUSH_URL, params=params, timeout=15
+            )
+
+            if response.status_code != 200:
+                logger.debug(f"Pullpush returned {response.status_code}")
+                return None
+
+            data = response.json()
+            # Pullpush returns {"data": [...]} with posts directly
+            posts = data.get("data", [])
+            if isinstance(posts, list):
+                return posts
+            return None
+
+        except (requests.RequestException, ValueError) as e:
+            logger.debug(f"Pullpush request failed: {e}")
+            return None
+
+    def _search_arctic_shift(self, query: str) -> Optional[list[dict]]:
+        """Search via Arctic Shift archive."""
+        after_ts = int((datetime.now() - timedelta(days=7)).timestamp())
+
+        params = {
+            "subreddit": self.subreddit_name,
+            "q": query,
+            "after": after_ts,
+            "limit": self.max_posts,
+            "sort": "score",
+            "order": "desc",
+        }
+
+        try:
+            response = self._session.get(
+                self.ARCTIC_SHIFT_URL, params=params, timeout=15
+            )
+
+            if response.status_code != 200:
+                logger.debug(f"Arctic Shift returned {response.status_code}")
+                return None
+
+            data = response.json()
+            # Arctic Shift returns {"data": [...]}
+            posts = data.get("data", [])
+            if isinstance(posts, list):
+                return posts
+            return None
+
+        except (requests.RequestException, ValueError) as e:
+            logger.debug(f"Arctic Shift request failed: {e}")
+            return None
+
+    def _search_reddit_direct(self, query: str) -> Optional[list[dict]]:
+        """Fallback: search Reddit directly (may be blocked on cloud IPs)."""
+        url = self.REDDIT_URL.format(subreddit=self.subreddit_name)
         params = {
             "q": query,
             "restrict_sr": "on",
@@ -180,42 +278,22 @@ class WSBRedditFetcher:
         try:
             response = self._session.get(url, params=params, timeout=10, allow_redirects=True)
 
-            # Log the actual URL hit (catches redirects)
-            logger.debug(f"Reddit search URL: {response.url} -> status {response.status_code}")
-
-            if response.status_code == 429:
-                logger.warning("Reddit rate limited - backing off")
-                time.sleep(10)
-                return []
-
             if response.status_code != 200:
-                logger.warning(
-                    f"Reddit search returned {response.status_code} for '{query}'. "
-                    f"URL: {response.url}"
-                )
-                return []
+                logger.debug(f"Reddit direct returned {response.status_code}")
+                return None
 
-            # Check content type - Reddit sometimes returns HTML instead of JSON
             content_type = response.headers.get("Content-Type", "")
             if "json" not in content_type and "javascript" not in content_type:
-                logger.warning(
-                    f"Reddit returned non-JSON content for '{query}': {content_type}. "
-                    f"Body preview: {response.text[:200]}"
-                )
-                return []
+                logger.debug(f"Reddit returned non-JSON: {content_type}")
+                return None
 
             data = response.json()
             children = data.get("data", {}).get("children", [])
-            result = [child.get("data", {}) for child in children]
-            logger.debug(f"Reddit search for '{query}': {len(result)} raw results")
-            return result
+            return [child.get("data", {}) for child in children]
 
-        except requests.RequestException as e:
-            logger.error(f"Reddit request failed for '{query}': {e}")
-            return []
-        except ValueError as e:
-            logger.error(f"Failed to parse Reddit JSON for '{query}': {e}")
-            return []
+        except (requests.RequestException, ValueError) as e:
+            logger.debug(f"Reddit direct failed: {e}")
+            return None
 
     def _symbol_in_text(self, symbol: str, text: str) -> bool:
         """Check if a stock symbol genuinely appears in text."""

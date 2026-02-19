@@ -1090,34 +1090,79 @@ def api_wsb_sentiment():
 
 @app.route("/api/wsb-test")
 def api_wsb_test():
-    """Diagnostic endpoint to test Reddit connectivity."""
+    """Diagnostic endpoint to test all WSB data sources."""
     import requests as req
+    from datetime import timedelta as td
     symbol = "NVDA"
-    url = f"https://old.reddit.com/r/wallstreetbets/search.json"
-    params = {"q": symbol, "restrict_sr": "on", "sort": "relevance", "t": "week", "limit": 5, "type": "link"}
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     }
+    after_ts = int((datetime.now() - td(days=7)).timestamp())
+    results = {}
+
+    # Test 1: Pullpush
     try:
-        resp = req.get(url, params=params, headers=headers, timeout=10, allow_redirects=True)
-        content_type = resp.headers.get("Content-Type", "unknown")
-        is_json = "json" in content_type or "javascript" in content_type
-        result = {
-            "status_code": resp.status_code,
-            "final_url": resp.url,
-            "content_type": content_type,
-            "is_json": is_json,
-            "body_preview": resp.text[:500] if not is_json else None,
-        }
-        if is_json and resp.status_code == 200:
+        resp = req.get(
+            "https://api.pullpush.io/reddit/search/submission/",
+            params={"subreddit": "wallstreetbets", "q": symbol, "after": after_ts, "size": 5, "sort": "score", "sort_type": "desc"},
+            headers=headers, timeout=15,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            posts = data.get("data", [])
+            results["pullpush"] = {
+                "status": "OK", "post_count": len(posts),
+                "titles": [p.get("title", "")[:80] for p in posts[:3]],
+            }
+        else:
+            results["pullpush"] = {"status": f"HTTP {resp.status_code}", "body_preview": resp.text[:200]}
+    except Exception as e:
+        results["pullpush"] = {"status": f"ERROR: {e}"}
+
+    # Test 2: Arctic Shift
+    try:
+        resp = req.get(
+            "https://arctic-shift.photon-reddit.com/api/posts",
+            params={"subreddit": "wallstreetbets", "q": symbol, "after": after_ts, "limit": 5, "sort": "score", "order": "desc"},
+            headers=headers, timeout=15,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            posts = data.get("data", [])
+            results["arctic_shift"] = {
+                "status": "OK", "post_count": len(posts),
+                "titles": [p.get("title", "")[:80] for p in posts[:3]],
+            }
+        else:
+            results["arctic_shift"] = {"status": f"HTTP {resp.status_code}", "body_preview": resp.text[:200]}
+    except Exception as e:
+        results["arctic_shift"] = {"status": f"ERROR: {e}"}
+
+    # Test 3: Reddit direct
+    try:
+        resp = req.get(
+            "https://old.reddit.com/r/wallstreetbets/search.json",
+            params={"q": symbol, "restrict_sr": "on", "sort": "relevance", "t": "week", "limit": 5, "type": "link"},
+            headers=headers, timeout=10, allow_redirects=True,
+        )
+        ct = resp.headers.get("Content-Type", "")
+        is_json = "json" in ct or "javascript" in ct
+        if resp.status_code == 200 and is_json:
             data = resp.json()
             children = data.get("data", {}).get("children", [])
-            result["post_count"] = len(children)
-            result["first_titles"] = [c.get("data", {}).get("title", "")[:80] for c in children[:3]]
-        return jsonify(result)
+            results["reddit_direct"] = {
+                "status": "OK", "post_count": len(children),
+                "titles": [c.get("data", {}).get("title", "")[:80] for c in children[:3]],
+            }
+        else:
+            results["reddit_direct"] = {
+                "status": f"HTTP {resp.status_code}", "content_type": ct,
+                "body_preview": resp.text[:200] if not is_json else None,
+            }
     except Exception as e:
-        import traceback
-        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+        results["reddit_direct"] = {"status": f"ERROR: {e}"}
+
+    return jsonify({"symbol": symbol, "sources": results})
 
 
 if __name__ == "__main__":
