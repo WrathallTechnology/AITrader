@@ -396,7 +396,7 @@ class AITrader:
 
             # Calculate existing exposure from positions
             existing_exposure = sum(
-                pos.avg_cost * abs(pos.quantity) * pos.contract.multiplier
+                pos.avg_cost * abs(pos.quantity) * (pos.contract.multiplier or 100)
                 for pos in existing_positions
             )
             existing_count = len(existing_positions)

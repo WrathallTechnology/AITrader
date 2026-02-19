@@ -47,8 +47,8 @@ class WSBRedditFetcher:
     Caches results per symbol with configurable TTL.
     """
 
-    # Reddit's public JSON endpoints don't need auth but require a user-agent
-    SEARCH_URL = "https://www.reddit.com/r/{subreddit}/search.json"
+    # Use old.reddit.com - more reliable for JSON endpoints (no consent walls)
+    SEARCH_URL = "https://old.reddit.com/r/{subreddit}/search.json"
 
     def __init__(
         self,
@@ -67,8 +67,9 @@ class WSBRedditFetcher:
 
         self._session = requests.Session()
         self._session.headers.update({
-            "User-Agent": "AITrader/1.0 (Options Sentiment Analyzer)",
-            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7",
+            "Accept-Language": "en-US,en;q=0.9",
         })
 
     @property
@@ -154,7 +155,7 @@ class WSBRedditFetcher:
                     f"total_comments={data.total_comments}"
                 )
             else:
-                logger.debug(f"No WSB posts found for {symbol}")
+                logger.info(f"No WSB posts found for {symbol} (searched: {search_terms})")
 
             return data if posts else None
 
@@ -177,7 +178,10 @@ class WSBRedditFetcher:
         }
 
         try:
-            response = self._session.get(url, params=params, timeout=10)
+            response = self._session.get(url, params=params, timeout=10, allow_redirects=True)
+
+            # Log the actual URL hit (catches redirects)
+            logger.debug(f"Reddit search URL: {response.url} -> status {response.status_code}")
 
             if response.status_code == 429:
                 logger.warning("Reddit rate limited - backing off")
@@ -185,18 +189,32 @@ class WSBRedditFetcher:
                 return []
 
             if response.status_code != 200:
-                logger.warning(f"Reddit search returned {response.status_code}")
+                logger.warning(
+                    f"Reddit search returned {response.status_code} for '{query}'. "
+                    f"URL: {response.url}"
+                )
+                return []
+
+            # Check content type - Reddit sometimes returns HTML instead of JSON
+            content_type = response.headers.get("Content-Type", "")
+            if "json" not in content_type and "javascript" not in content_type:
+                logger.warning(
+                    f"Reddit returned non-JSON content for '{query}': {content_type}. "
+                    f"Body preview: {response.text[:200]}"
+                )
                 return []
 
             data = response.json()
             children = data.get("data", {}).get("children", [])
-            return [child.get("data", {}) for child in children]
+            result = [child.get("data", {}) for child in children]
+            logger.debug(f"Reddit search for '{query}': {len(result)} raw results")
+            return result
 
         except requests.RequestException as e:
-            logger.error(f"Reddit request failed: {e}")
+            logger.error(f"Reddit request failed for '{query}': {e}")
             return []
         except ValueError as e:
-            logger.error(f"Failed to parse Reddit JSON: {e}")
+            logger.error(f"Failed to parse Reddit JSON for '{query}': {e}")
             return []
 
     def _symbol_in_text(self, symbol: str, text: str) -> bool:

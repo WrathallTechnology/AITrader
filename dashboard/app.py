@@ -464,7 +464,7 @@ def api_options_scanner():
                                 "option_type": c.option_type.value if hasattr(c.option_type, 'value') else str(c.option_type),
                                 "bid": c.bid,
                                 "ask": c.ask,
-                                "delta": round(c.delta, 3) if c.delta else None,
+                                "delta": round(c.greeks.delta, 3) if c.greeks and c.greeks.delta else None,
                                 "iv": round(c.implied_volatility * 100, 1) if c.implied_volatility else None,
                             }
                             for c in o.signal.contracts
@@ -554,7 +554,7 @@ def api_options_chain(symbol: str):
                     "volume": c.volume,
                     "open_interest": c.open_interest,
                     "iv": round(c.implied_volatility * 100, 1) if c.implied_volatility else None,
-                    "delta": round(c.delta, 3) if c.delta else None,
+                    "delta": round(c.greeks.delta, 3) if c.greeks and c.greeks.delta else None,
                 }
                 for c in chain.contracts[:20]  # First 20 contracts as sample
             ],
@@ -992,11 +992,15 @@ def api_wsb_sentiment():
                 wsb_data = fetcher.fetch_symbol_data(symbol)
 
                 if wsb_data is None or not wsb_data.posts:
+                    # Try to provide diagnostic info
+                    msg = "No WSB activity this week"
+                    if wsb_data is not None and not wsb_data.posts:
+                        msg = "Posts found but none matched symbol filter"
                     results.append({
                         "symbol": symbol,
                         "post_count": 0,
                         "sentiment": None,
-                        "message": "No WSB activity",
+                        "message": msg,
                     })
                     continue
 
@@ -1082,6 +1086,38 @@ def api_wsb_sentiment():
             "error": str(e),
             "traceback": traceback.format_exc(),
         }), 500
+
+
+@app.route("/api/wsb-test")
+def api_wsb_test():
+    """Diagnostic endpoint to test Reddit connectivity."""
+    import requests as req
+    symbol = "NVDA"
+    url = f"https://old.reddit.com/r/wallstreetbets/search.json"
+    params = {"q": symbol, "restrict_sr": "on", "sort": "relevance", "t": "week", "limit": 5, "type": "link"}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    }
+    try:
+        resp = req.get(url, params=params, headers=headers, timeout=10, allow_redirects=True)
+        content_type = resp.headers.get("Content-Type", "unknown")
+        is_json = "json" in content_type or "javascript" in content_type
+        result = {
+            "status_code": resp.status_code,
+            "final_url": resp.url,
+            "content_type": content_type,
+            "is_json": is_json,
+            "body_preview": resp.text[:500] if not is_json else None,
+        }
+        if is_json and resp.status_code == 200:
+            data = resp.json()
+            children = data.get("data", {}).get("children", [])
+            result["post_count"] = len(children)
+            result["first_titles"] = [c.get("data", {}).get("title", "")[:80] for c in children[:3]]
+        return jsonify(result)
+    except Exception as e:
+        import traceback
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
 
 if __name__ == "__main__":
