@@ -453,8 +453,9 @@ class AITrader:
             self.options_risk.set_positions(existing_positions)
 
             # Calculate existing exposure from positions
+            # Guard against None values from expired/worthless contracts
             existing_exposure = sum(
-                pos.avg_cost * abs(pos.quantity) * (pos.contract.multiplier or 100)
+                (pos.avg_cost or 0) * abs(pos.quantity or 0) * (pos.contract.multiplier or 100)
                 for pos in existing_positions
             )
             existing_count = len(existing_positions)
