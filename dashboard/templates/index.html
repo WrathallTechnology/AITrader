@@ -1243,8 +1243,11 @@
                 }
 
                 section.style.display = 'block';
-                document.getElementById('competition-last-update').textContent =
-                    'Updated: ' + new Date().toLocaleTimeString();
+                const statusMsg = data.message || '';
+                const updateText = statusMsg
+                    ? statusMsg + ' | ' + new Date().toLocaleTimeString()
+                    : 'Updated: ' + new Date().toLocaleTimeString();
+                document.getElementById('competition-last-update').textContent = updateText;
 
                 // Rank badge styles
                 const rankStyles = {

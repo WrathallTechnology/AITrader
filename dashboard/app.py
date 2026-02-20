@@ -1101,15 +1101,48 @@ def api_wsb_sentiment():
 def api_competition():
     """Get method competition leaderboard."""
     try:
+        if not config.competition.enabled:
+            return jsonify({
+                "enabled": False,
+                "leaderboard": [],
+                "message": "Competition not enabled in config",
+            })
+
         from src.competition.tracker import MethodTracker
 
         tracker = MethodTracker()
 
         if not tracker.methods:
+            # Competition enabled but no tracker data yet — show empty state
+            default_methods = [
+                {"method_id": "strat", "method_name": "Strategies"},
+                {"method_id": "wsb", "method_name": "WSB Reddit"},
+                {"method_id": "gemini", "method_name": "Gemini AI"},
+            ]
+            capital = config.competition.method_capital
+            leaderboard = []
+            for i, m in enumerate(default_methods):
+                leaderboard.append({
+                    "method_id": m["method_id"],
+                    "method_name": m["method_name"],
+                    "capital": capital,
+                    "cash": capital,
+                    "invested": 0,
+                    "realized_pnl": 0,
+                    "unrealized_pnl": 0,
+                    "total_pnl": 0,
+                    "total_pnl_pct": 0,
+                    "total_trades": 0,
+                    "winning_trades": 0,
+                    "win_rate": 0,
+                    "holdings": [],
+                    "rank": i + 1,
+                })
             return jsonify({
-                "enabled": False,
-                "leaderboard": [],
-                "message": "Competition not active (no tracker data)",
+                "enabled": True,
+                "leaderboard": leaderboard,
+                "message": "Waiting for market open — no trades yet",
+                "timestamp": datetime.now().isoformat(),
             })
 
         # Get live prices for unrealized P&L

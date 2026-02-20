@@ -14,7 +14,8 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-TRACKER_FILE = Path("logs/method_tracker.json")
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+TRACKER_FILE = PROJECT_ROOT / "logs" / "method_tracker.json"
 
 
 @dataclass
