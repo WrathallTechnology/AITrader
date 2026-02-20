@@ -111,20 +111,20 @@ class OptionsRiskManager:
     ) -> PositionRiskMetrics:
         """Calculate risk metrics for a single position."""
         contract = position.contract
-        qty = position.quantity
-        multiplier = contract.multiplier
+        qty = position.quantity or 0
+        multiplier = contract.multiplier or 100
 
         # Calculate Greeks exposure
         if contract.greeks:
-            delta = contract.greeks.delta * qty * multiplier
-            gamma = contract.greeks.gamma * qty * multiplier
-            theta = contract.greeks.theta * qty * multiplier
-            vega = contract.greeks.vega * qty * multiplier
+            delta = (contract.greeks.delta or 0) * qty * multiplier
+            gamma = (contract.greeks.gamma or 0) * qty * multiplier
+            theta = (contract.greeks.theta or 0) * qty * multiplier
+            vega = (contract.greeks.vega or 0) * qty * multiplier
         else:
             # Estimate if Greeks not available
             delta = self._estimate_delta(contract, position.is_long) * qty * multiplier
             gamma = 0
-            theta = -0.05 * contract.mid_price * qty * multiplier  # Rough estimate
+            theta = -0.05 * (contract.mid_price or 0) * qty * multiplier  # Rough estimate
             vega = 0
 
         # Calculate max loss
@@ -138,7 +138,7 @@ class OptionsRiskManager:
             at_risk_value = position.cost_basis
         else:
             # For short positions, at-risk is potential assignment value
-            at_risk_value = contract.strike * abs(qty) * multiplier
+            at_risk_value = (contract.strike or 0) * abs(qty) * multiplier
 
         return PositionRiskMetrics(
             position=position,
@@ -169,8 +169,8 @@ class OptionsRiskManager:
     def _calculate_max_loss(self, position: OptionPosition) -> Optional[float]:
         """Calculate maximum loss for a position."""
         contract = position.contract
-        qty = abs(position.quantity)
-        multiplier = contract.multiplier
+        qty = abs(position.quantity or 0)
+        multiplier = contract.multiplier or 100
 
         if position.is_long:
             # Long options: max loss = premium paid
@@ -183,8 +183,8 @@ class OptionsRiskManager:
                 return None
             else:
                 # Short put: max loss = strike - premium received
-                premium_received = position.avg_cost * qty * multiplier
-                max_loss = (contract.strike * qty * multiplier) - premium_received
+                premium_received = (position.avg_cost or 0) * qty * multiplier
+                max_loss = ((contract.strike or 0) * qty * multiplier) - premium_received
                 return max(0, max_loss)
 
     def get_portfolio_metrics(self) -> PortfolioRiskMetrics:

@@ -579,7 +579,7 @@ class OptionsClient:
             if contract.option_type == OptionType.CALL:
                 max_profit = None  # Unlimited for calls
             else:
-                max_profit = (contract.strike * contract.multiplier * order.quantity) - cost
+                max_profit = ((contract.strike or 0) * (contract.multiplier or 100) * (order.quantity or 0)) - cost
 
         elif order.action == OrderAction.SELL_TO_OPEN:
             # Short option
@@ -588,7 +588,7 @@ class OptionsClient:
                 max_loss = None  # Unlimited for naked calls
             else:
                 # Cash secured put: max loss = strike - premium
-                max_loss = (contract.strike * contract.multiplier * order.quantity) - cost
+                max_loss = ((contract.strike or 0) * (contract.multiplier or 100) * (order.quantity or 0)) - cost
 
         else:
             # Closing orders
