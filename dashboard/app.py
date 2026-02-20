@@ -1024,8 +1024,14 @@ def api_wsb_sentiment():
                     ],
                 }
 
-                # Run Gemini analysis if configured
-                if gemini.is_configured:
+                # Run Gemini analysis ONLY during market hours (saves money)
+                try:
+                    client = get_client()
+                    market_open = client.is_market_open()
+                except Exception:
+                    market_open = False
+
+                if gemini.is_configured and market_open:
                     # Get underlying price for context
                     try:
                         options_client = get_options_client()
@@ -1062,9 +1068,12 @@ def api_wsb_sentiment():
                         }
                     else:
                         entry["sentiment"] = None
-                else:
+                elif not gemini.is_configured:
                     entry["sentiment"] = None
                     entry["gemini_configured"] = False
+                else:
+                    entry["sentiment"] = None
+                    entry["market_closed"] = True
 
                 results.append(entry)
 

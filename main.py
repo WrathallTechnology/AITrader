@@ -253,12 +253,15 @@ class AITrader:
         # Log options risk limits at startup for verification
         limits = self.options_risk.limits
         logger.info("=" * 50)
-        logger.info("OPTIONS RISK LIMITS (VERIFY THESE ARE CORRECT!):")
-        logger.info(f"  Max Single Position: ${limits.max_single_position_value:.0f}")
-        logger.info(f"  Max Total Exposure:  ${limits.max_total_options_exposure:.0f}")
-        logger.info(f"  Max Positions:       {limits.max_positions}")
-        logger.info(f"  Min DTE:             {limits.min_days_to_expiration} days")
-        logger.info(f"  Max DTE:             {limits.max_days_to_expiration} days")
+        logger.info("TRADING LIMITS (VERIFY THESE ARE CORRECT!):")
+        if config.trading.initial_capital is not None:
+            logger.info(f"  INITIAL CAPITAL:     ${config.trading.initial_capital:,.0f}")
+        else:
+            logger.info(f"  INITIAL CAPITAL:     Not set (using full account)")
+        logger.info(f"  Options Max Exposure:  ${limits.max_total_options_exposure:.0f}")
+        logger.info(f"  Options Max Position:  ${limits.max_single_position_value:.0f}")
+        logger.info(f"  Options Max Positions: {limits.max_positions}")
+        logger.info(f"  Options DTE Range:     {limits.min_days_to_expiration}-{limits.max_days_to_expiration} days")
         logger.info("=" * 50)
 
     def get_effective_capital(self) -> float:
@@ -318,6 +321,24 @@ class AITrader:
                 # Check market status once per cycle
                 market_open = self._is_market_open()
 
+                # GLOBAL CAPITAL CHECK - prevent ALL new buys if over limit
+                capital_available = True
+                if config.trading.initial_capital is not None and market_open:
+                    try:
+                        all_positions = self.client.get_all_positions()
+                        total_invested = sum(abs(float(p.cost_basis)) for p in all_positions)
+                        if total_invested >= config.trading.initial_capital:
+                            capital_available = False
+                            logger.info(
+                                f"CAPITAL LIMIT: ${total_invested:,.2f} invested >= "
+                                f"${config.trading.initial_capital:,.2f} limit - no new buys"
+                            )
+                        else:
+                            remaining = config.trading.initial_capital - total_invested
+                            logger.info(f"Capital: ${total_invested:,.2f} / ${config.trading.initial_capital:,.2f} (${remaining:,.2f} remaining)")
+                    except Exception as e:
+                        logger.warning(f"Failed global capital check: {e}")
+
                 # Check market hours for stocks
                 if self.mode in ("stocks", "all"):
                     if market_open:
@@ -327,8 +348,10 @@ class AITrader:
 
                 # Options during market hours
                 if self.mode in ("options", "all"):
-                    if market_open:
+                    if market_open and capital_available:
                         self._run_options_cycle()
+                    elif market_open and not capital_available:
+                        logger.info("Capital limit reached - skipping options cycle")
                     else:
                         logger.info("Stock market closed - skipping options cycle")
 
@@ -616,21 +639,28 @@ class AITrader:
             return
 
         # CAP trade value to remaining capital if initial_capital is set
-        # Include in-cycle orders that may not be reflected in positions yet
+        # Use cost_basis (what was actually spent) not market_value (which fluctuates)
         if config.trading.initial_capital is not None and signal.signal_type == SignalType.BUY:
             positions = self.client.get_all_positions()
-            total_position_value = sum(float(p.market_value) for p in positions)
+            # Use cost_basis to track what was actually invested, not current market value
+            total_invested = sum(abs(float(p.cost_basis)) for p in positions)
 
-            # CRITICAL: Include orders placed this cycle
-            total_committed = total_position_value + self._cycle_orders_value
+            # CRITICAL: Include orders placed this cycle (not yet in positions)
+            total_committed = total_invested + self._cycle_orders_value
             remaining_capital = config.trading.initial_capital - total_committed
+
+            logger.info(
+                f"Capital check for {symbol}: invested=${total_invested:.2f}, "
+                f"cycle_orders=${self._cycle_orders_value:.2f}, "
+                f"total=${total_committed:.2f} / ${config.trading.initial_capital:.2f}"
+            )
 
             proposed_value = shares * current_price
             if proposed_value > remaining_capital:
                 # Cap to remaining capital (with small buffer for fees)
                 max_shares = (remaining_capital * 0.98) / current_price
                 if max_shares < 0.0001:  # Too small to trade
-                    logger.info(f"Remaining capital ${remaining_capital:.2f} too small for {symbol} (committed: positions=${total_position_value:.2f} + cycle=${self._cycle_orders_value:.2f})")
+                    logger.info(f"Remaining capital ${remaining_capital:.2f} too small for {symbol}")
                     return
                 logger.info(f"Capping {symbol} trade from {shares:.4f} to {max_shares:.4f} shares (remaining: ${remaining_capital:.2f})")
                 shares = max_shares
@@ -664,28 +694,29 @@ class AITrader:
                 return False
 
         # CHECK TOTAL EXPOSURE - Don't exceed initial_capital limit
-        # Include BOTH existing positions AND orders placed this cycle (not yet reflected in positions)
+        # Use cost_basis (what was actually spent) not market_value (which fluctuates)
         if signal.signal_type == SignalType.BUY and config.trading.initial_capital is not None:
-            total_position_value = sum(float(p.market_value) for p in positions)
+            total_invested = sum(abs(float(p.cost_basis)) for p in positions)
 
             # CRITICAL: Add in-cycle orders that may not be reflected in positions yet
-            total_committed = total_position_value + self._cycle_orders_value
+            total_committed = total_invested + self._cycle_orders_value
 
             # Calculate remaining capital
             remaining = config.trading.initial_capital - total_committed
 
-            logger.debug(f"Capital check: positions=${total_position_value:.2f} + cycle_orders=${self._cycle_orders_value:.2f} = ${total_committed:.2f}")
+            logger.info(
+                f"Capital check: invested=${total_invested:.2f} + "
+                f"cycle_orders=${self._cycle_orders_value:.2f} = "
+                f"${total_committed:.2f} / ${config.trading.initial_capital:.2f}"
+            )
 
             if total_committed >= config.trading.initial_capital:
-                logger.info(f"Capital limit REACHED: ${total_committed:,.2f} / ${config.trading.initial_capital:,.2f} (includes ${self._cycle_orders_value:.2f} from this cycle)")
+                logger.info(f"Capital limit REACHED: ${total_committed:,.2f} / ${config.trading.initial_capital:,.2f}")
                 return False
 
-            if remaining < 100:  # Less than $100 remaining
-                logger.info(f"Insufficient remaining capital: ${remaining:.2f} (positions=${total_position_value:.2f}, cycle_orders=${self._cycle_orders_value:.2f})")
+            if remaining < 50:  # Less than $50 remaining
+                logger.info(f"Insufficient remaining capital: ${remaining:.2f}")
                 return False
-
-            # Log capital status
-            logger.info(f"Capital: ${total_committed:,.2f} / ${config.trading.initial_capital:,.2f} used (${remaining:,.2f} remaining)")
 
         # For small accounts (<$10k), skip complex correlation/sector checks
         # These are designed for larger diversified portfolios
