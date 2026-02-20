@@ -1092,19 +1092,17 @@ def api_wsb_sentiment():
 def api_wsb_test():
     """Diagnostic endpoint to test all WSB data sources."""
     import requests as req
-    from datetime import timedelta as td
     symbol = "NVDA"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     }
-    after_ts = int((datetime.now() - td(days=7)).timestamp())
     results = {}
 
     # Test 1: Pullpush
     try:
         resp = req.get(
             "https://api.pullpush.io/reddit/search/submission/",
-            params={"subreddit": "wallstreetbets", "q": symbol, "after": after_ts, "size": 5, "sort": "score", "sort_type": "desc"},
+            params={"subreddit": "wallstreetbets", "q": symbol, "after": "7d", "size": 5, "sort": "desc", "sort_type": "score"},
             headers=headers, timeout=15,
         )
         if resp.status_code == 200:
@@ -1122,8 +1120,8 @@ def api_wsb_test():
     # Test 2: Arctic Shift
     try:
         resp = req.get(
-            "https://arctic-shift.photon-reddit.com/api/posts",
-            params={"subreddit": "wallstreetbets", "q": symbol, "after": after_ts, "limit": 5, "sort": "score", "order": "desc"},
+            "https://arctic-shift.photon-reddit.com/api/posts/search",
+            params={"subreddit": "wallstreetbets", "query": symbol, "after": "7d", "limit": 5, "sort": "desc"},
             headers=headers, timeout=15,
         )
         if resp.status_code == 200:

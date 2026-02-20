@@ -56,7 +56,7 @@ class WSBRedditFetcher:
 
     # Archive API endpoints (no auth needed, no IP blocking)
     PULLPUSH_URL = "https://api.pullpush.io/reddit/search/submission/"
-    ARCTIC_SHIFT_URL = "https://arctic-shift.photon-reddit.com/api/posts"
+    ARCTIC_SHIFT_URL = "https://arctic-shift.photon-reddit.com/api/posts/search"
     REDDIT_URL = "https://old.reddit.com/r/{subreddit}/search.json"
 
     def __init__(
@@ -186,28 +186,28 @@ class WSBRedditFetcher:
         for source_name, search_fn in sources:
             try:
                 results = search_fn(query)
-                if results is not None:
-                    logger.debug(f"{source_name}: {len(results)} results for '{query}'")
+                if results is not None and len(results) > 0:
+                    logger.info(f"{source_name}: {len(results)} results for '{query}'")
                     return results
+                if results is not None:
+                    logger.debug(f"{source_name}: 0 results for '{query}', trying next source")
                 # None means source failed, try next
             except Exception as e:
                 logger.debug(f"{source_name} failed for '{query}': {e}")
                 continue
 
-        logger.warning(f"All WSB sources failed for '{query}'")
+        logger.info(f"All WSB sources returned 0 results for '{query}'")
         return []
 
     def _search_pullpush(self, query: str) -> Optional[list[dict]]:
         """Search via Pullpush (Pushshift successor)."""
-        after_ts = int((datetime.now() - timedelta(days=7)).timestamp())
-
         params = {
             "subreddit": self.subreddit_name,
             "q": query,
-            "after": after_ts,
-            "size": self.max_posts,
-            "sort": "score",
-            "sort_type": "desc",
+            "after": "7d",
+            "size": min(self.max_posts, 100),
+            "sort": "desc",
+            "sort_type": "score",
         }
 
         try:
@@ -232,15 +232,12 @@ class WSBRedditFetcher:
 
     def _search_arctic_shift(self, query: str) -> Optional[list[dict]]:
         """Search via Arctic Shift archive."""
-        after_ts = int((datetime.now() - timedelta(days=7)).timestamp())
-
         params = {
             "subreddit": self.subreddit_name,
-            "q": query,
-            "after": after_ts,
-            "limit": self.max_posts,
-            "sort": "score",
-            "order": "desc",
+            "query": query,
+            "after": "7d",
+            "limit": min(self.max_posts, 100),
+            "sort": "desc",
         }
 
         try:
