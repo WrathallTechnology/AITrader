@@ -1102,7 +1102,7 @@ def api_wsb_test():
     try:
         resp = req.get(
             "https://api.pullpush.io/reddit/search/submission/",
-            params={"subreddit": "wallstreetbets", "q": symbol, "after": "7d", "size": 5, "sort": "desc", "sort_type": "score"},
+            params={"subreddit": "wallstreetbets", "q": symbol, "after": int((datetime.now() - timedelta(days=7)).timestamp()), "size": 5, "sort": "desc", "sort_type": "score"},
             headers=headers, timeout=15,
         )
         if resp.status_code == 200:

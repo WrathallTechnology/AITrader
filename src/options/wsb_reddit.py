@@ -176,10 +176,10 @@ class WSBRedditFetcher:
         """Search WSB posts using archive APIs with fallback chain."""
         self._rate_limit()
 
-        # Try each source in order
+        # Try each source in order (Arctic Shift first - most reliable from cloud)
         sources = [
-            ("Pullpush", self._search_pullpush),
             ("ArcticShift", self._search_arctic_shift),
+            ("Pullpush", self._search_pullpush),
             ("Reddit", self._search_reddit_direct),
         ]
 
@@ -201,10 +201,11 @@ class WSBRedditFetcher:
 
     def _search_pullpush(self, query: str) -> Optional[list[dict]]:
         """Search via Pullpush (Pushshift successor)."""
+        after_ts = int((datetime.now() - timedelta(days=7)).timestamp())
         params = {
             "subreddit": self.subreddit_name,
             "q": query,
-            "after": "7d",
+            "after": after_ts,
             "size": min(self.max_posts, 100),
             "sort": "desc",
             "sort_type": "score",
