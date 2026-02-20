@@ -252,12 +252,12 @@ class OptionPosition:
     @property
     def market_value(self) -> float:
         """Current market value."""
-        return self.contract.mid_price * abs(self.quantity) * self.contract.multiplier
+        return (self.contract.mid_price or 0) * abs(self.quantity or 0) * (self.contract.multiplier or 100)
 
     @property
     def cost_basis(self) -> float:
         """Total cost basis."""
-        return self.avg_cost * abs(self.quantity) * self.contract.multiplier
+        return (self.avg_cost or 0) * abs(self.quantity or 0) * (self.contract.multiplier or 100)
 
     @property
     def unrealized_pnl(self) -> float:
@@ -346,7 +346,7 @@ class OptionSpread:
     def net_debit(self) -> float:
         """Net debit (positive) or credit (negative) paid."""
         return sum(
-            leg.avg_cost * leg.quantity * leg.contract.multiplier
+            (leg.avg_cost or 0) * (leg.quantity or 0) * (leg.contract.multiplier or 100)
             for leg in self.legs
         )
 
