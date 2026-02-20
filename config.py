@@ -5,10 +5,11 @@ Loads settings from environment variables and provides defaults.
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(Path(__file__).parent / ".env")
 
 
 @dataclass
