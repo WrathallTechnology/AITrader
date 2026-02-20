@@ -342,12 +342,19 @@ class AITrader:
                 market_open = self._is_market_open()
 
                 # GLOBAL CAPITAL CHECK - prevent ALL new buys if over limit
+                # Only count STOCK positions (options have separate limits)
                 # Competition mode manages its own per-method capital limits
                 capital_available = True
                 if config.trading.initial_capital is not None and market_open:
                     try:
                         all_positions = self.client.get_all_positions()
-                        total_invested = sum(abs(float(p.cost_basis)) for p in all_positions)
+                        # Filter to stocks only — options symbols contain expiry dates
+                        # and are much longer (e.g. AAPL260220C00272500)
+                        stock_positions = [
+                            p for p in all_positions
+                            if len(p.symbol) <= 5 and not any(c.isdigit() for c in p.symbol)
+                        ]
+                        total_invested = sum(abs(float(p.cost_basis)) for p in stock_positions)
                         capital_limit = config.trading.initial_capital
                         if total_invested >= capital_limit:
                             capital_available = False
@@ -670,8 +677,12 @@ class AITrader:
         # Use cost_basis (what was actually spent) not market_value (which fluctuates)
         if config.trading.initial_capital is not None and signal.signal_type == SignalType.BUY:
             positions = self.client.get_all_positions()
-            # Use cost_basis to track what was actually invested, not current market value
-            total_invested = sum(abs(float(p.cost_basis)) for p in positions)
+            # Only count stock positions (options have separate limits)
+            stock_positions = [
+                p for p in positions
+                if len(p.symbol) <= 5 and not any(c.isdigit() for c in p.symbol)
+            ]
+            total_invested = sum(abs(float(p.cost_basis)) for p in stock_positions)
 
             # CRITICAL: Include orders placed this cycle (not yet in positions)
             total_committed = total_invested + self._cycle_orders_value
@@ -723,8 +734,13 @@ class AITrader:
 
         # CHECK TOTAL EXPOSURE - Don't exceed initial_capital limit
         # Use cost_basis (what was actually spent) not market_value (which fluctuates)
+        # Only count stock positions (options have separate limits)
         if signal.signal_type == SignalType.BUY and config.trading.initial_capital is not None:
-            total_invested = sum(abs(float(p.cost_basis)) for p in positions)
+            stock_positions = [
+                p for p in positions
+                if len(p.symbol) <= 5 and not any(c.isdigit() for c in p.symbol)
+            ]
+            total_invested = sum(abs(float(p.cost_basis)) for p in stock_positions)
 
             # CRITICAL: Add in-cycle orders that may not be reflected in positions yet
             total_committed = total_invested + self._cycle_orders_value
