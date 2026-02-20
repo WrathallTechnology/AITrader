@@ -391,6 +391,38 @@
             </div>
         </div>
 
+        <!-- Method Competition Leaderboard -->
+        <div id="competition-section" style="display: none;">
+            <h2 class="section-title">Method Competition</h2>
+            <div class="card">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <span style="font-size: 13px; color: #888;">3 methods competing with $1,000 each</span>
+                    <span id="competition-last-update" style="font-size: 11px; color: #666;">-</span>
+                </div>
+                <table class="positions-table" id="competition-table">
+                    <thead>
+                        <tr>
+                            <th>Rank</th>
+                            <th>Method</th>
+                            <th>Capital</th>
+                            <th>Invested</th>
+                            <th>Cash</th>
+                            <th>P&L</th>
+                            <th>P&L %</th>
+                            <th>Trades</th>
+                            <th>Win Rate</th>
+                            <th>Holdings</th>
+                        </tr>
+                    </thead>
+                    <tbody id="competition-table-body">
+                        <tr>
+                            <td colspan="10" style="text-align: center; color: #666;">Loading competition data...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
         <!-- Watchlist Signals Section -->
         <h2 class="section-title">Stock Watchlist</h2>
         <div class="card">
@@ -1196,10 +1228,77 @@
             }
         }
 
+        // Update competition leaderboard
+        async function updateCompetition() {
+            try {
+                const response = await fetch('/api/competition');
+                const data = await response.json();
+
+                const section = document.getElementById('competition-section');
+                const tbody = document.getElementById('competition-table-body');
+
+                if (!data.enabled || !data.leaderboard || data.leaderboard.length === 0) {
+                    section.style.display = 'none';
+                    return;
+                }
+
+                section.style.display = 'block';
+                document.getElementById('competition-last-update').textContent =
+                    'Updated: ' + new Date().toLocaleTimeString();
+
+                // Rank badge styles
+                const rankStyles = {
+                    1: 'background: linear-gradient(135deg, #ffd700 0%, #ff8c00 100%); color: #000;',
+                    2: 'background: linear-gradient(135deg, #c0c0c0 0%, #a0a0a0 100%); color: #000;',
+                    3: 'background: linear-gradient(135deg, #cd7f32 0%, #b87333 100%); color: #000;',
+                };
+
+                tbody.innerHTML = data.leaderboard.map(m => {
+                    const pnlClass = m.total_pnl >= 0 ? 'positive' : 'negative';
+                    const rankBadgeStyle = rankStyles[m.rank] || 'background: #2a2a4a; color: #888;';
+
+                    // Holdings summary
+                    let holdingsHtml = '-';
+                    if (m.holdings && m.holdings.length > 0) {
+                        holdingsHtml = m.holdings.map(h => {
+                            const hPnlClass = h.pnl >= 0 ? 'positive' : 'negative';
+                            return `<span style="display: inline-block; margin: 1px 3px; padding: 2px 6px; background: #1a1a2a; border-radius: 3px; font-size: 10px;">
+                                ${h.symbol} <span class="${hPnlClass}">${h.pnl >= 0 ? '+' : ''}$${h.pnl.toFixed(2)}</span>
+                            </span>`;
+                        }).join('');
+                    }
+
+                    return `
+                        <tr>
+                            <td>
+                                <span style="${rankBadgeStyle} display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; font-weight: 700; font-size: 14px;">${m.rank}</span>
+                            </td>
+                            <td><strong style="color: #fff;">${m.method_name}</strong></td>
+                            <td>${formatCurrency(m.capital)}</td>
+                            <td>${formatCurrency(m.invested)}</td>
+                            <td>${formatCurrency(m.cash)}</td>
+                            <td class="${pnlClass}" style="font-weight: 600;">
+                                ${m.total_pnl >= 0 ? '+' : ''}${formatCurrency(m.total_pnl)}
+                            </td>
+                            <td class="${pnlClass}">
+                                ${m.total_pnl_pct >= 0 ? '+' : ''}${m.total_pnl_pct.toFixed(2)}%
+                            </td>
+                            <td>${m.total_trades}</td>
+                            <td>${m.win_rate.toFixed(0)}%</td>
+                            <td style="font-size: 11px;">${holdingsHtml}</td>
+                        </tr>
+                    `;
+                }).join('');
+            } catch (error) {
+                console.error('Error fetching competition:', error);
+            }
+        }
+
         // Update all
         async function updateAll() {
             await Promise.all([
                 updateStatus(),
+                updateCompetition(),
                 updateSignals(),
                 updateWSBSentiment(),
                 updateOptionsScanner(),

@@ -101,11 +101,21 @@ class StrategyConfig:
 
 
 @dataclass
+class CompetitionConfig:
+    """Method competition configuration."""
+    enabled: bool = False
+    method_capital: float = 1000.0  # Capital per method
+    gemini_interval_min: int = 20   # Minutes between Gemini calls
+    strategies_interval_min: int = 5  # Minutes between strategy runs
+
+
+@dataclass
 class Config:
     """Main configuration container."""
     alpaca: AlpacaConfig
     trading: TradingConfig
     strategy: StrategyConfig
+    competition: CompetitionConfig
     log_level: str
     log_file: str
 
@@ -133,10 +143,18 @@ def load_config() -> Config:
 
     strategy = StrategyConfig()
 
+    competition = CompetitionConfig(
+        enabled=os.getenv("COMPETITION_ENABLED", "false").lower() in ("true", "1", "yes"),
+        method_capital=float(os.getenv("METHOD_CAPITAL", "1000")),
+        gemini_interval_min=int(os.getenv("GEMINI_INTERVAL", "20")),
+        strategies_interval_min=int(os.getenv("STRATEGIES_INTERVAL", "5")),
+    )
+
     return Config(
         alpaca=alpaca,
         trading=trading,
         strategy=strategy,
+        competition=competition,
         log_level=os.getenv("LOG_LEVEL", "INFO"),
         log_file=os.getenv("LOG_FILE", "logs/trading.log"),
     )

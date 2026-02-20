@@ -20,6 +20,28 @@ class GeminiSentimentResult:
     risk_warning: str = ""
 
 
+@dataclass
+class GeminiFullAnalysis:
+    """Result from shared comprehensive Gemini analysis.
+
+    Contains both WSB sentiment fields (for Method 2) and
+    comprehensive trade signal fields (for Method 3).
+    """
+    # WSB sentiment (Method 2 reads these)
+    wsb_sentiment: str       # "bullish", "bearish", "neutral"
+    wsb_confidence: float    # 0.0 - 1.0
+
+    # Comprehensive trade signal (Method 3 reads these)
+    trade_signal: str        # "buy", "sell", "hold"
+    trade_confidence: float  # 0.0 - 1.0
+
+    # Optional fields (with defaults)
+    key_themes: list[str] = field(default_factory=list)
+    reasoning: str = ""
+    key_factors: list[str] = field(default_factory=list)
+    risk_warning: str = ""
+
+
 class GeminiSentimentClient:
     """
     Uses Google Gemini API to analyze WSB post data
@@ -155,6 +177,160 @@ IMPORTANT GUIDELINES:
             f"- Mixed signals or low confidence -> iron_condor or neutral\n"
             f"- Expect big move but direction unclear -> straddle or strangle"
         )
+
+    def analyze_full(
+        self,
+        symbol: str,
+        price: float,
+        technical_indicators: dict,
+        price_history: list[dict],
+        wsb_posts: list[dict],
+    ) -> Optional[GeminiFullAnalysis]:
+        """Shared comprehensive analysis for competition methods 2 & 3.
+
+        One Gemini call returns both WSB sentiment analysis AND a
+        comprehensive trade recommendation. Each method reads its
+        relevant fields from the result.
+
+        Args:
+            symbol: Stock ticker
+            price: Current stock price
+            technical_indicators: Dict of indicator values (rsi, macd, sma_20, etc.)
+            price_history: Recent price bars [{close, high, low, volume}, ...]
+            wsb_posts: WSB post dicts [{title, body, score, ...}, ...]
+
+        Returns:
+            GeminiFullAnalysis or None on failure
+        """
+        if not self.is_configured:
+            logger.warning("Gemini API key not configured")
+            return None
+
+        prompt = self._build_full_prompt(symbol, price, technical_indicators, price_history, wsb_posts)
+
+        try:
+            model = self._get_model()
+            response = model.generate_content(
+                prompt,
+                generation_config={
+                    "temperature": 0.2,
+                    "max_output_tokens": 1024,
+                    "response_mime_type": "application/json",
+                },
+            )
+            return self._parse_full_response(response.text)
+
+        except Exception as e:
+            logger.error(f"Gemini full analysis failed for {symbol}: {e}")
+            return None
+
+    def _build_full_prompt(
+        self,
+        symbol: str,
+        price: float,
+        indicators: dict,
+        price_history: list[dict],
+        wsb_posts: list[dict],
+    ) -> str:
+        """Build prompt for shared comprehensive analysis."""
+        # Technical indicators section
+        ind_lines = []
+        for key, val in indicators.items():
+            if val is not None:
+                if isinstance(val, float):
+                    ind_lines.append(f"  {key}: {val:.4f}")
+                else:
+                    ind_lines.append(f"  {key}: {val}")
+        indicators_text = "\n".join(ind_lines) if ind_lines else "  (no indicators available)"
+
+        # Price history section (last 5 bars)
+        price_lines = []
+        for bar in price_history[-5:]:
+            price_lines.append(
+                f"  Close: ${bar.get('close', 0):.2f}, "
+                f"High: ${bar.get('high', 0):.2f}, "
+                f"Low: ${bar.get('low', 0):.2f}, "
+                f"Vol: {bar.get('volume', 0):,.0f}"
+            )
+        price_text = "\n".join(price_lines) if price_lines else "  (no price history)"
+
+        # WSB posts section
+        if wsb_posts:
+            post_lines = []
+            for i, post in enumerate(wsb_posts[:10], 1):
+                post_lines.append(
+                    f"  Post #{i}: \"{post.get('title', '')}\"\n"
+                    f"    Score: {post.get('score', 0)}, "
+                    f"Comments: {post.get('num_comments', 0)}, "
+                    f"Flair: {post.get('flair', 'None')}"
+                )
+            wsb_text = "\n".join(post_lines)
+        else:
+            wsb_text = "  (no WSB posts found for this symbol)"
+
+        return (
+            f"Analyze {symbol} (current price: ${price:.2f}) comprehensively.\n\n"
+            f"TECHNICAL INDICATORS:\n{indicators_text}\n\n"
+            f"RECENT PRICE BARS:\n{price_text}\n\n"
+            f"WALLSTREETBETS REDDIT POSTS (last 7 days):\n{wsb_text}\n\n"
+            f"Provide TWO separate assessments as JSON:\n"
+            f"1. WSB SENTIMENT: What is the Reddit crowd's sentiment on this stock?\n"
+            f"2. TRADE RECOMMENDATION: Based on ALL data (technicals + price + WSB), "
+            f"should someone buy, sell, or hold?\n\n"
+            f"Return JSON with exactly this structure:\n"
+            f'{{\n'
+            f'    "wsb_sentiment": "bullish" | "bearish" | "neutral",\n'
+            f'    "wsb_confidence": <float 0.0-1.0>,\n'
+            f'    "key_themes": ["<theme1>", "<theme2>"],\n'
+            f'    "trade_signal": "buy" | "sell" | "hold",\n'
+            f'    "trade_confidence": <float 0.0-1.0>,\n'
+            f'    "reasoning": "<2-3 sentence explanation of trade recommendation>",\n'
+            f'    "key_factors": ["<factor1>", "<factor2>"],\n'
+            f'    "risk_warning": "<brief risk note>"\n'
+            f'}}\n\n'
+            f"IMPORTANT RULES:\n"
+            f"- WSB sentiment should reflect what Reddit thinks, even if you disagree\n"
+            f"- Trade signal should be YOUR best recommendation using all data\n"
+            f"- If WSB posts are absent, set wsb_sentiment to neutral with low confidence\n"
+            f"- Confidence 0.0-0.3 = weak signal, 0.3-0.6 = moderate, 0.6-1.0 = strong\n"
+            f"- Be conservative: only high confidence for very clear setups"
+        )
+
+    def _parse_full_response(self, response_text: str) -> Optional[GeminiFullAnalysis]:
+        """Parse the shared analysis JSON response."""
+        try:
+            text = response_text.strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1]
+            if text.endswith("```"):
+                text = text.rsplit("```", 1)[0]
+            text = text.strip()
+
+            data = json.loads(text)
+
+            wsb_sent = data.get("wsb_sentiment", "neutral")
+            if wsb_sent not in ("bullish", "bearish", "neutral"):
+                wsb_sent = "neutral"
+
+            trade_sig = data.get("trade_signal", "hold")
+            if trade_sig not in ("buy", "sell", "hold"):
+                trade_sig = "hold"
+
+            return GeminiFullAnalysis(
+                wsb_sentiment=wsb_sent,
+                wsb_confidence=max(0.0, min(1.0, float(data.get("wsb_confidence", 0.0)))),
+                key_themes=data.get("key_themes", []),
+                trade_signal=trade_sig,
+                trade_confidence=max(0.0, min(1.0, float(data.get("trade_confidence", 0.0)))),
+                reasoning=data.get("reasoning", ""),
+                key_factors=data.get("key_factors", []),
+                risk_warning=data.get("risk_warning", ""),
+            )
+
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
+            logger.error(f"Failed to parse Gemini full response: {e}")
+            logger.debug(f"Raw response: {response_text[:500]}")
+            return None
 
     def _parse_response(self, response_text: str) -> Optional[GeminiSentimentResult]:
         """Parse Gemini's JSON response."""

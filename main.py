@@ -46,6 +46,7 @@ from src.options import (
     OptionsScanner,
     create_risk_limits_aggressive,
 )
+from src.competition import MethodCompetitionManager
 import json
 from pathlib import Path
 
@@ -140,6 +141,8 @@ class AITrader:
         logger.info(f"Paper Trading: {config.alpaca.is_paper}")
         logger.info(f"Initial Capital: ${config.trading.initial_capital:,.2f}"
                    if config.trading.initial_capital else "Using full account")
+        if config.competition.enabled:
+            logger.info(f"Competition Mode: ENABLED (${config.competition.method_capital:,.0f} per method x 3)")
 
         # Initialize components
         self._init_data_components()
@@ -152,6 +155,11 @@ class AITrader:
             "AAPL", "MSFT", "GOOGL", "AMZN", "META",
             "NVDA", "TSLA", "AMD", "SPY", "QQQ",
         ]
+
+        # Competition system
+        self.competition_manager: Optional[MethodCompetitionManager] = None
+        if config.competition.enabled:
+            self._init_competition()
 
         if mode in ("options", "all"):
             self._init_options_components()
@@ -232,6 +240,18 @@ class AITrader:
         """Initialize order execution components."""
         logger.info("Initializing execution components...")
         # Using self.client initialized in _init_data_components
+
+    def _init_competition(self):
+        """Initialize method competition system."""
+        logger.info("Initializing Method Competition System...")
+        self.competition_manager = MethodCompetitionManager(
+            client=self.client,
+            data_fetcher=self.data_fetcher,
+            watchlist=self.stock_watchlist,
+            method_capital=config.competition.method_capital,
+            gemini_interval_min=config.competition.gemini_interval_min,
+            strategies_interval_min=config.competition.strategies_interval_min,
+        )
 
     def _init_options_components(self):
         """Initialize options trading components."""
@@ -322,20 +342,22 @@ class AITrader:
                 market_open = self._is_market_open()
 
                 # GLOBAL CAPITAL CHECK - prevent ALL new buys if over limit
+                # Competition mode manages its own per-method capital limits
                 capital_available = True
                 if config.trading.initial_capital is not None and market_open:
                     try:
                         all_positions = self.client.get_all_positions()
                         total_invested = sum(abs(float(p.cost_basis)) for p in all_positions)
-                        if total_invested >= config.trading.initial_capital:
+                        capital_limit = config.trading.initial_capital
+                        if total_invested >= capital_limit:
                             capital_available = False
                             logger.info(
                                 f"CAPITAL LIMIT: ${total_invested:,.2f} invested >= "
-                                f"${config.trading.initial_capital:,.2f} limit - no new buys"
+                                f"${capital_limit:,.2f} limit - no new buys"
                             )
                         else:
-                            remaining = config.trading.initial_capital - total_invested
-                            logger.info(f"Capital: ${total_invested:,.2f} / ${config.trading.initial_capital:,.2f} (${remaining:,.2f} remaining)")
+                            remaining = capital_limit - total_invested
+                            logger.info(f"Capital: ${total_invested:,.2f} / ${capital_limit:,.2f} (${remaining:,.2f} remaining)")
                     except Exception as e:
                         logger.warning(f"Failed global capital check: {e}")
 
@@ -391,6 +413,12 @@ class AITrader:
 
     def _run_stock_cycle(self):
         """Run one cycle of stock trading."""
+        # If competition mode is enabled, delegate to competition manager
+        if self.competition_manager is not None:
+            logger.info("Running competition stock cycle...")
+            self.competition_manager.run_cycle()
+            return
+
         logger.info("Running stock trading cycle...")
 
         # Reset cycle order tracking

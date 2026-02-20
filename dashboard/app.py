@@ -1097,6 +1097,89 @@ def api_wsb_sentiment():
         }), 500
 
 
+@app.route("/api/competition")
+def api_competition():
+    """Get method competition leaderboard."""
+    try:
+        from src.competition.tracker import MethodTracker
+
+        tracker = MethodTracker()
+
+        if not tracker.methods:
+            return jsonify({
+                "enabled": False,
+                "leaderboard": [],
+                "message": "Competition not active (no tracker data)",
+            })
+
+        # Get live prices for unrealized P&L
+        live_prices = {}
+        try:
+            client = get_client()
+            positions = client.get_all_positions()
+            for p in positions:
+                live_prices[p.symbol] = float(p.current_price)
+        except Exception:
+            pass
+
+        leaderboard = []
+        for method_id in tracker.get_all_method_ids():
+            state = tracker.get_method_state(method_id)
+            if not state:
+                continue
+
+            unrealized = tracker.get_unrealized_pnl(method_id, live_prices)
+            total_pnl = state.realized_pnl + unrealized
+
+            leaderboard.append({
+                "method_id": method_id,
+                "method_name": state.method_name,
+                "capital": state.capital,
+                "cash": round(state.cash, 2),
+                "invested": round(state.invested, 2),
+                "realized_pnl": round(state.realized_pnl, 2),
+                "unrealized_pnl": round(unrealized, 2),
+                "total_pnl": round(total_pnl, 2),
+                "total_pnl_pct": round(total_pnl / state.capital * 100, 2) if state.capital > 0 else 0,
+                "total_trades": state.total_trades,
+                "winning_trades": state.winning_trades,
+                "win_rate": round(state.win_rate * 100, 1),
+                "holdings": [
+                    {
+                        "symbol": h.symbol,
+                        "shares": h.shares,
+                        "entry_price": h.entry_price,
+                        "current_price": live_prices.get(h.symbol, h.entry_price),
+                        "pnl": round(
+                            (live_prices.get(h.symbol, h.entry_price) - h.entry_price) * h.shares,
+                            2,
+                        ),
+                    }
+                    for h in state.holdings
+                ],
+            })
+
+        # Sort by total P&L descending
+        leaderboard.sort(key=lambda x: x["total_pnl"], reverse=True)
+        for i, entry in enumerate(leaderboard):
+            entry["rank"] = i + 1
+
+        return jsonify({
+            "enabled": True,
+            "leaderboard": leaderboard,
+            "timestamp": datetime.now().isoformat(),
+        })
+
+    except Exception as e:
+        import traceback
+        return jsonify({
+            "enabled": False,
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "leaderboard": [],
+        }), 500
+
+
 @app.route("/api/wsb-test")
 def api_wsb_test():
     """Diagnostic endpoint to test all WSB data sources."""

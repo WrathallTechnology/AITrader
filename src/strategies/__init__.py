@@ -10,6 +10,7 @@ from .performance_tracker import PerformanceTracker
 from .correlation_adjuster import CorrelationAdjuster
 from .signal_scorer import SignalScorer, SignalScore
 from .time_filter import TimeFilter, VolatilityFilter
+from .volume_profile import VolumeStrategy
 
 __all__ = [
     # Base
@@ -26,6 +27,7 @@ __all__ = [
     "MeanReversionStrategy",
     "SentimentStrategy",
     "SentimentAnalyzer",
+    "VolumeStrategy",
     # Components
     "RegimeDetector",
     "MarketRegime",

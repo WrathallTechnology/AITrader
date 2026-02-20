@@ -157,6 +157,7 @@ class AlpacaClient:
         side: str,
         limit_price: float,
         time_in_force: str = "day",
+        client_order_id: Optional[str] = None,
     ):
         """Submit a limit order."""
         order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
@@ -167,15 +168,20 @@ class AlpacaClient:
 
         tif = self._parse_time_in_force(time_in_force)
 
-        request = LimitOrderRequest(
+        kwargs = dict(
             symbol=symbol,
             qty=qty,
             side=order_side,
             limit_price=limit_price,
             time_in_force=tif,
         )
+        if client_order_id:
+            kwargs["client_order_id"] = client_order_id
 
-        logger.info(f"Submitting limit order: {side} {qty} {symbol} @ {limit_price}")
+        request = LimitOrderRequest(**kwargs)
+
+        logger.info(f"Submitting limit order: {side} {qty} {symbol} @ {limit_price}"
+                     + (f" (id={client_order_id})" if client_order_id else ""))
         return self.trading.submit_order(request)
 
     def submit_bracket_order(
