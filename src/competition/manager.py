@@ -108,27 +108,31 @@ class MethodCompetitionManager:
         # Method 1: All existing strategies via AdvancedHybridStrategy
         technical = TechnicalStrategy(
             name="technical",
-            weight=config.strategy.technical_weight,
+            weight=0.4,
             config=config.strategy,
-        )
-        ml = MLStrategy(
-            name="ml",
-            weight=config.strategy.ml_weight,
-            config=config.strategy,
-            min_confidence=0.51,
         )
 
-        # Load ML model if available
+        strategies = [technical]
+
+        # Only include ML if model is actually trained
         model_path = Path("models/price_predictor.pkl")
         if model_path.exists():
             try:
+                ml = MLStrategy(
+                    name="ml",
+                    weight=0.3,
+                    config=config.strategy,
+                    min_confidence=0.51,
+                )
                 ml.load_model(model_path)
+                strategies.append(ml)
                 logger.info("Competition: Loaded pre-trained ML model")
             except Exception as e:
                 logger.warning(f"Competition: Could not load ML model: {e}")
+        else:
+            logger.info("Competition: No ML model found, using technical + momentum + mean reversion")
 
         # Try to load optional strategies
-        strategies = [technical, ml]
         try:
             momentum = MomentumStrategy(name="momentum", weight=0.3)
             strategies.append(momentum)
@@ -141,10 +145,12 @@ class MethodCompetitionManager:
         except Exception as e:
             logger.debug(f"Could not load MeanReversionStrategy: {e}")
 
+        logger.info(f"Competition strategies: {[s.name for s in strategies]}")
+
         self.hybrid_strategy = AdvancedHybridStrategy(
             name="competition_hybrid",
             strategies=strategies,
-            min_confidence=0.25,
+            min_confidence=0.20,
             consensus_required=0.0,
             use_adaptive_weights=False,
             use_regime_detection=False,

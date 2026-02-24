@@ -3,10 +3,71 @@
 import json
 import logging
 import os
+import time
+from collections import deque
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+
+class GeminiRateLimiter:
+    """Rate limiter for Gemini free tier (10 RPM, 1500 RPD)."""
+
+    def __init__(self, max_rpm: int = 8, max_rpd: int = 1400):
+        self.max_rpm = max_rpm
+        self.max_rpd = max_rpd
+        self._minute_timestamps: deque[float] = deque()
+        self._daily_count = 0
+        self._daily_date: Optional[date] = None
+
+    def _reset_daily_if_needed(self):
+        today = date.today()
+        if self._daily_date != today:
+            self._daily_count = 0
+            self._daily_date = today
+
+    def can_call(self) -> bool:
+        """Check if we can make a call without exceeding limits."""
+        self._reset_daily_if_needed()
+        if self._daily_count >= self.max_rpd:
+            return False
+        now = time.time()
+        # Clean old timestamps
+        while self._minute_timestamps and self._minute_timestamps[0] < now - 60:
+            self._minute_timestamps.popleft()
+        return len(self._minute_timestamps) < self.max_rpm
+
+    def record_call(self):
+        """Record that a call was made."""
+        self._reset_daily_if_needed()
+        self._minute_timestamps.append(time.time())
+        self._daily_count += 1
+
+    def wait_if_needed(self) -> bool:
+        """Wait until we can make a call. Returns False if daily limit hit."""
+        self._reset_daily_if_needed()
+        if self._daily_count >= self.max_rpd:
+            logger.warning(f"Gemini daily limit reached ({self._daily_count}/{self.max_rpd})")
+            return False
+        now = time.time()
+        while self._minute_timestamps and self._minute_timestamps[0] < now - 60:
+            self._minute_timestamps.popleft()
+        if len(self._minute_timestamps) >= self.max_rpm:
+            wait_time = 60 - (now - self._minute_timestamps[0]) + 0.5
+            logger.info(f"Gemini rate limit: waiting {wait_time:.1f}s")
+            time.sleep(wait_time)
+        return True
+
+    @property
+    def daily_remaining(self) -> int:
+        self._reset_daily_if_needed()
+        return max(0, self.max_rpd - self._daily_count)
+
+
+# Global rate limiter shared across all GeminiSentimentClient instances
+_rate_limiter = GeminiRateLimiter()
 
 
 @dataclass
@@ -111,10 +172,14 @@ IMPORTANT GUIDELINES:
         if not posts_data:
             return None
 
+        if not _rate_limiter.wait_if_needed():
+            return None
+
         prompt = self._build_prompt(symbol, posts_data, underlying_price)
 
         try:
             model = self._get_model()
+            _rate_limiter.record_call()
 
             response = model.generate_content(
                 prompt,
@@ -206,10 +271,14 @@ IMPORTANT GUIDELINES:
             logger.warning("Gemini API key not configured")
             return None
 
+        if not _rate_limiter.wait_if_needed():
+            return None
+
         prompt = self._build_full_prompt(symbol, price, technical_indicators, price_history, wsb_posts)
 
         try:
             model = self._get_model()
+            _rate_limiter.record_call()
             response = model.generate_content(
                 prompt,
                 generation_config={
