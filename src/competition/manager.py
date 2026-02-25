@@ -24,11 +24,11 @@ from src.data.processor import DataProcessor
 from src.strategies import (
     AdvancedHybridStrategy,
     TechnicalStrategy,
-    MLStrategy,
     MomentumStrategy,
     MeanReversionStrategy,
     SignalType,
 )
+from src.strategies.base import Signal
 from src.options.gemini_client import GeminiSentimentClient, GeminiFullAnalysis
 from src.options.wsb_reddit import WSBRedditFetcher
 
@@ -105,7 +105,8 @@ class MethodCompetitionManager:
 
     def _init_strategies(self):
         """Initialize all strategy instances."""
-        # Method 1: All existing strategies via AdvancedHybridStrategy
+        # Method 1: Technical strategies only (no ML — it's biased toward
+        # SELL on all symbols and prevents any BUY entries)
         technical = TechnicalStrategy(
             name="technical",
             weight=0.4,
@@ -113,24 +114,6 @@ class MethodCompetitionManager:
         )
 
         strategies = [technical]
-
-        # Only include ML if model is actually trained
-        model_path = Path("models/price_predictor.pkl")
-        if model_path.exists():
-            try:
-                ml = MLStrategy(
-                    name="ml",
-                    weight=0.3,
-                    config=config.strategy,
-                    min_confidence=0.51,
-                )
-                ml.load_model(model_path)
-                strategies.append(ml)
-                logger.info("Competition: Loaded pre-trained ML model")
-            except Exception as e:
-                logger.warning(f"Competition: Could not load ML model: {e}")
-        else:
-            logger.info("Competition: No ML model found, using technical + momentum + mean reversion")
 
         # Try to load optional strategies
         try:
@@ -205,6 +188,9 @@ class MethodCompetitionManager:
         """Run Method 1: All strategies combined."""
         logger.info("Competition: Running Strategies method...")
 
+        state = self.tracker.get_method_state(METHOD_STRATEGIES)
+        num_holdings = len(state.holdings) if state else 0
+
         for symbol in self.watchlist:
             try:
                 data = self._fetch_data(symbol)
@@ -217,10 +203,55 @@ class MethodCompetitionManager:
                     f"(conf={signal.confidence:.1%}) - {signal.reason}"
                 )
 
-                self._process_signal(METHOD_STRATEGIES, symbol, signal, data)
+                # If strategies say BUY or SELL, use that signal
+                if signal.signal_type != SignalType.HOLD:
+                    self._process_signal(METHOD_STRATEGIES, symbol, signal, data)
+                    if signal.signal_type == SignalType.BUY:
+                        num_holdings += 1
+                    continue
+
+                # Fallback: if we have fewer than 3 positions and strategies
+                # are neutral (not bearish), check simple entry conditions
+                if num_holdings < 3 and state and not state.has_holding(symbol):
+                    fallback = self._check_fallback_entry(symbol, data)
+                    if fallback:
+                        self._process_signal(METHOD_STRATEGIES, symbol, fallback, data)
+                        num_holdings += 1
 
             except Exception as e:
                 logger.error(f"[Strategies] Error for {symbol}: {e}")
+
+    def _check_fallback_entry(self, symbol: str, data: pd.DataFrame) -> Optional[Signal]:
+        """Simple fallback entry when strategies are neutral.
+
+        Buys if price is in a reasonable range: above SMA50 (uptrend)
+        and RSI between 30-55 (not overbought).
+        """
+        latest = data.iloc[-1]
+        price = float(latest["close"])
+
+        sma_50 = float(latest.get("sma_50", 0))
+        rsi = float(latest.get("rsi", 50))
+
+        if sma_50 <= 0:
+            return None
+
+        # Price above long-term average (uptrend) and not overbought
+        if price > sma_50 and 30 <= rsi <= 55:
+            confidence = 0.30
+            logger.info(
+                f"[Strategies] {symbol}: FALLBACK BUY "
+                f"(price ${price:.2f} > SMA50 ${sma_50:.2f}, RSI={rsi:.0f})"
+            )
+            return Signal(
+                symbol=symbol,
+                signal_type=SignalType.BUY,
+                confidence=confidence,
+                price=price,
+                reason=f"Fallback: uptrend (price>SMA50), RSI={rsi:.0f}",
+            )
+
+        return None
 
     def _run_gemini_methods(self):
         """Run Methods 2 & 3 with shared Gemini analysis."""
