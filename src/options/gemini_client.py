@@ -13,7 +13,11 @@ logger = logging.getLogger(__name__)
 
 
 class GeminiRateLimiter:
-    """Rate limiter for Gemini free tier (10 RPM, 1500 RPD)."""
+    """Rate limiter for Gemini free tier (10 RPM, 1500 RPD).
+
+    Tracks both local call counts AND server-side 429 errors.
+    When a 429 is received, stops all calls until the next hour.
+    """
 
     def __init__(self, max_rpm: int = 8, max_rpd: int = 1400):
         self.max_rpm = max_rpm
@@ -21,36 +25,38 @@ class GeminiRateLimiter:
         self._minute_timestamps: deque[float] = deque()
         self._daily_count = 0
         self._daily_date: Optional[date] = None
+        # Server-side quota exhaustion tracking
+        self._quota_exhausted_until: float = 0  # timestamp
 
     def _reset_daily_if_needed(self):
         today = date.today()
         if self._daily_date != today:
             self._daily_count = 0
             self._daily_date = today
+            self._quota_exhausted_until = 0  # Reset on new day
 
-    def can_call(self) -> bool:
-        """Check if we can make a call without exceeding limits."""
-        self._reset_daily_if_needed()
-        if self._daily_count >= self.max_rpd:
-            return False
-        now = time.time()
-        # Clean old timestamps
-        while self._minute_timestamps and self._minute_timestamps[0] < now - 60:
-            self._minute_timestamps.popleft()
-        return len(self._minute_timestamps) < self.max_rpm
+    def report_429(self):
+        """Called when a 429 error is received from the API.
 
-    def record_call(self):
-        """Record that a call was made."""
-        self._reset_daily_if_needed()
-        self._minute_timestamps.append(time.time())
-        self._daily_count += 1
+        Stops all calls for 1 hour to let the quota recover.
+        """
+        self._quota_exhausted_until = time.time() + 3600  # 1 hour backoff
+        logger.warning("Gemini 429 received — pausing all Gemini calls for 1 hour")
 
     def wait_if_needed(self) -> bool:
-        """Wait until we can make a call. Returns False if daily limit hit."""
+        """Check if we can make a call. Returns False if quota exhausted."""
         self._reset_daily_if_needed()
+
+        # Check if server-side quota is exhausted
+        if time.time() < self._quota_exhausted_until:
+            remaining = int(self._quota_exhausted_until - time.time())
+            logger.debug(f"Gemini quota paused — {remaining}s remaining")
+            return False
+
         if self._daily_count >= self.max_rpd:
             logger.warning(f"Gemini daily limit reached ({self._daily_count}/{self.max_rpd})")
             return False
+
         now = time.time()
         while self._minute_timestamps and self._minute_timestamps[0] < now - 60:
             self._minute_timestamps.popleft()
@@ -59,6 +65,12 @@ class GeminiRateLimiter:
             logger.info(f"Gemini rate limit: waiting {wait_time:.1f}s")
             time.sleep(wait_time)
         return True
+
+    def record_call(self):
+        """Record that a call was made."""
+        self._reset_daily_if_needed()
+        self._minute_timestamps.append(time.time())
+        self._daily_count += 1
 
     @property
     def daily_remaining(self) -> int:
@@ -193,6 +205,8 @@ IMPORTANT GUIDELINES:
             return self._parse_response(response.text)
 
         except Exception as e:
+            if "429" in str(e):
+                _rate_limiter.report_429()
             logger.error(f"Gemini analysis failed for {symbol}: {e}")
             return None
 
@@ -290,6 +304,8 @@ IMPORTANT GUIDELINES:
             return self._parse_full_response(response.text)
 
         except Exception as e:
+            if "429" in str(e):
+                _rate_limiter.report_429()
             logger.error(f"Gemini full analysis failed for {symbol}: {e}")
             return None
 
