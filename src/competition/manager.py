@@ -258,8 +258,19 @@ class MethodCompetitionManager:
         return None
 
     def _run_gemini_methods(self):
-        """Run Methods 2 & 3 with shared Gemini analysis."""
-        logger.info("Competition: Running WSB + Gemini methods (shared analysis)...")
+        """Run Methods 2 & 3 with screen-then-analyze Gemini flow.
+
+        Step 1: Gather lightweight data for all symbols (technicals + WSB post count)
+        Step 2: ONE screening call asks Gemini to pick top 3 symbols
+        Step 3: Full analysis only for those picks (max 3 more calls)
+
+        Total: ~4 Gemini calls per cycle instead of 10.
+        """
+        logger.info("Competition: Running WSB + Gemini methods (screen-then-analyze)...")
+
+        # Step 1: Gather screening data for all symbols
+        screening_data = []
+        symbol_cache = {}  # {symbol: (data, wsb_data, wsb_posts, post_stats)}
 
         for symbol in self.watchlist:
             try:
@@ -267,11 +278,57 @@ class MethodCompetitionManager:
                 if data is None:
                     continue
 
-                # Fetch WSB posts (cached for 10 min by WSBRedditFetcher)
+                latest = data.iloc[-1]
+                price = float(latest["close"])
+
+                # Lightweight WSB check (uses cache, no extra API calls)
                 wsb_data = self.wsb_fetcher.fetch_symbol_data(symbol)
+                wsb_post_count = 0
+                wsb_avg_score = 0
+                if wsb_data and wsb_data.posts:
+                    wsb_post_count = len(wsb_data.posts)
+                    wsb_avg_score = wsb_data.avg_score
+
+                screening_data.append({
+                    "symbol": symbol,
+                    "price": price,
+                    "rsi": float(latest.get("rsi", 50)) if pd.notna(latest.get("rsi")) else 50,
+                    "sma_20": float(latest.get("sma_20", 0)) if pd.notna(latest.get("sma_20")) else 0,
+                    "sma_50": float(latest.get("sma_50", 0)) if pd.notna(latest.get("sma_50")) else 0,
+                    "macd": float(latest.get("macd", 0)) if pd.notna(latest.get("macd")) else 0,
+                    "wsb_post_count": wsb_post_count,
+                    "wsb_avg_score": wsb_avg_score,
+                })
+
+                # Cache for detailed analysis later
+                symbol_cache[symbol] = (data, wsb_data)
+
+            except Exception as e:
+                logger.error(f"[Screening] Error gathering data for {symbol}: {e}")
+
+        if not screening_data:
+            logger.warning("No symbols with data for Gemini screening")
+            return
+
+        # Step 2: ONE screening call to pick top symbols
+        picks = self.gemini_client.screen_watchlist(screening_data, max_picks=3)
+
+        if not picks:
+            logger.info("Gemini screening returned no picks (quota or no opportunities)")
+            return
+
+        # Step 3: Full analysis only for picked symbols
+        for symbol in picks:
+            try:
+                if symbol not in symbol_cache:
+                    continue
+
+                data, wsb_data = symbol_cache[symbol]
+                latest = data.iloc[-1]
+
+                # Build WSB posts for detailed analysis
                 wsb_posts = []
                 post_stats = {"count": 0, "avg_score": 0, "total_comments": 0}
-
                 if wsb_data and wsb_data.posts:
                     wsb_posts = [
                         {
@@ -290,8 +347,7 @@ class MethodCompetitionManager:
                         "total_comments": wsb_data.total_comments,
                     }
 
-                # Build technical indicators dict
-                latest = data.iloc[-1]
+                # Build technical indicators
                 indicators = {}
                 for col in ["rsi", "macd", "macd_signal", "sma_20", "sma_50",
                             "bb_upper", "bb_lower", "atr", "volatility"]:
@@ -300,7 +356,6 @@ class MethodCompetitionManager:
                         if val is not None and pd.notna(val):
                             indicators[col] = float(val)
 
-                # Price history (last 10 bars)
                 price_history = []
                 for _, row in data.tail(10).iterrows():
                     price_history.append({
@@ -312,7 +367,7 @@ class MethodCompetitionManager:
 
                 current_price = float(latest["close"])
 
-                # ONE shared Gemini call
+                # Detailed Gemini call for this symbol
                 analysis = self.gemini_client.analyze_full(
                     symbol=symbol,
                     price=current_price,
@@ -342,9 +397,8 @@ class MethodCompetitionManager:
                     )
                     self._process_signal(METHOD_GEMINI, symbol, gemini_signal, data)
                 else:
-                    logger.warning(f"Gemini analysis returned None for {symbol}")
+                    logger.warning(f"Gemini full analysis returned None for {symbol}")
 
-                # Rate limit between symbols
                 time.sleep(1)
 
             except Exception as e:

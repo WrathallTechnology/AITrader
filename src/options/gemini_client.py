@@ -257,6 +257,103 @@ IMPORTANT GUIDELINES:
             f"- Expect big move but direction unclear -> straddle or strangle"
         )
 
+    def screen_watchlist(
+        self,
+        symbols_data: list[dict],
+        max_picks: int = 3,
+    ) -> list[str]:
+        """Screen a watchlist and pick the top symbols worth analyzing.
+
+        Uses ONE Gemini call to evaluate all symbols at once, returning
+        just the top picks. This replaces 10 individual calls with 1.
+
+        Args:
+            symbols_data: List of dicts with symbol, price, rsi, sma_20, sma_50,
+                          macd, wsb_post_count, wsb_avg_score
+            max_picks: Maximum number of symbols to return
+
+        Returns:
+            List of symbol strings worth detailed analysis
+        """
+        if not self.is_configured:
+            return []
+
+        if not _rate_limiter.wait_if_needed():
+            return []
+
+        # Build compact screening prompt
+        lines = []
+        for sd in symbols_data:
+            sym = sd["symbol"]
+            price = sd.get("price", 0)
+            rsi = sd.get("rsi", 50)
+            sma_20 = sd.get("sma_20", 0)
+            sma_50 = sd.get("sma_50", 0)
+            macd = sd.get("macd", 0)
+            wsb_count = sd.get("wsb_post_count", 0)
+            wsb_score = sd.get("wsb_avg_score", 0)
+            lines.append(
+                f"  {sym}: ${price:.2f}, RSI={rsi:.0f}, "
+                f"SMA20=${sma_20:.2f}, SMA50=${sma_50:.2f}, "
+                f"MACD={macd:.3f}, WSB posts={wsb_count} (avg score {wsb_score:.0f})"
+            )
+        data_text = "\n".join(lines)
+
+        prompt = (
+            f"You are a stock screener. Review these {len(symbols_data)} stocks and pick "
+            f"the top {max_picks} that have the STRONGEST trading opportunity right now "
+            f"(either buy or sell). Consider technicals, momentum, and WSB buzz.\n\n"
+            f"STOCKS:\n{data_text}\n\n"
+            f"Return JSON with exactly this structure:\n"
+            f'{{\n'
+            f'    "picks": ["{symbols_data[0]["symbol"]}", ...],\n'
+            f'    "reasoning": "brief explanation"\n'
+            f'}}\n\n'
+            f"RULES:\n"
+            f"- Return exactly {max_picks} symbols (or fewer if none are interesting)\n"
+            f"- Prefer symbols with extreme RSI (<35 or >70), MACD crossovers, "
+            f"or high WSB engagement\n"
+            f"- Only return the JSON, nothing else"
+        )
+
+        try:
+            model = self._get_model()
+            _rate_limiter.record_call()
+            response = model.generate_content(
+                prompt,
+                generation_config={
+                    "temperature": 0.2,
+                    "max_output_tokens": 256,
+                    "response_mime_type": "application/json",
+                },
+            )
+
+            text = response.text.strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1]
+            if text.endswith("```"):
+                text = text.rsplit("```", 1)[0]
+
+            data = json.loads(text.strip())
+            picks = data.get("picks", [])
+            reasoning = data.get("reasoning", "")
+
+            # Validate picks are from our watchlist
+            valid_symbols = {sd["symbol"] for sd in symbols_data}
+            picks = [p for p in picks if p in valid_symbols][:max_picks]
+
+            logger.info(
+                f"Gemini screening picked {len(picks)}/{len(symbols_data)}: "
+                f"{', '.join(picks)} — {reasoning}"
+            )
+            return picks
+
+        except Exception as e:
+            if "429" in str(e):
+                _rate_limiter.report_429()
+            logger.error(f"Gemini screening failed: {e}")
+            return []
+
     def analyze_full(
         self,
         symbol: str,
