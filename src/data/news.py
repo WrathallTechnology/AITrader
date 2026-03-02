@@ -36,8 +36,12 @@ class AlpacaNewsClient:
     """
 
     def __init__(self):
-        """Initialize news client (no keys required)."""
-        self._client = NewsClient()
+        """Initialize news client with Alpaca credentials."""
+        from config import config
+        self._client = NewsClient(
+            api_key=config.alpaca.api_key,
+            secret_key=config.alpaca.secret_key,
+        )
         self._cache: dict[str, list[NewsArticle]] = {}
         self._cache_time: dict[str, datetime] = {}
         self._cache_ttl = timedelta(minutes=5)  # Cache news for 5 minutes

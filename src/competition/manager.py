@@ -180,6 +180,10 @@ class MethodCompetitionManager:
     def _should_run_gemini(self, now: datetime) -> bool:
         if not self.gemini_client.is_configured:
             return False
+        # Skip if Gemini quota is paused (429 backoff)
+        from src.options.gemini_client import _rate_limiter
+        if not _rate_limiter.wait_if_needed():
+            return False
         if self._last_gemini_run is None:
             return True
         return (now - self._last_gemini_run) >= self.gemini_interval
